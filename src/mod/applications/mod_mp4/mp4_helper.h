@@ -35,8 +35,8 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 typedef struct
 {
 	u_int32_t frame; // sampleID
-	u_int32_t packetsPerFrame;
-	u_int32_t packet; // packetID
+	u_int16_t packetsPerFrame;
+	u_int16_t packet; // packetID
 } RuntimeProperties;
 
 
@@ -78,9 +78,9 @@ void VideoClose(VideoContext * ctx);
 int VideoGetTracks(VideoContext * ctx);
 
 // returns: TRUE = has more data, FALSE = end-of-stream or failure
-int VideoGetVideoPacket(VideoContext * ctx, char * buffer, int * size);
+int VideoGetVideoPacket(VideoContext * ctx, char * buffer, u_int * size);
 
 // returns: TRUE = has more data, FALSE = end-of-stream or failure
-int VideoGetAudioPacket(VideoContext * ctx, char * buffer, int * size);
+int VideoGetAudioPacket(VideoContext * ctx, char * buffer, u_int * size);
 
 #endif

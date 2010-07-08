@@ -22,16 +22,17 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 #include "mp4_helper.h"
 
 static int VideoGetPacket(MP4FileHandle fh, MP4TrackId hint, RuntimeProperties * rt,
-													int header, char * buffer, int * size);
+													int header, char * buffer, u_int * size);
 
 
 VideoContext * VideoOpen(const char * file)
 {
+	VideoContext * vc;
 	MP4FileHandle fh = MP4Read(file, 0);
 	if(fh == MP4_INVALID_FILE_HANDLE)
 		return NULL;
 	
-	VideoContext * vc = malloc(sizeof(VideoContext));
+	vc = malloc(sizeof(VideoContext));
 	memset(vc, 0, sizeof vc);
 	vc->fh = fh;
 	return vc;
@@ -49,16 +50,15 @@ void VideoClose(VideoContext * context)
 
 int VideoGetTracks(VideoContext * context)
 {
-	if(context == NULL) return 0;
-	
 	TrackProperties track;
 	int i=0;
 	int audio = 0, video = 0;
-	
+
+	if(context == NULL) return 0;
+
 	while((track.hint = MP4FindTrackId(context->fh, i++, MP4_HINT_TRACK_TYPE, 0)) != MP4_INVALID_TRACK_ID)
 	{
-
-		MP4GetHintTrackSDPPayload(context->fh, track.hint, &track.codecName, &track.payload, &track.packetLength, NULL);
+		MP4GetHintTrackRtpPayload(context->fh, track.hint, &track.codecName, &track.payload, NULL, NULL);
 
 		track.track = MP4GetHintTrackReferenceTrackId(context->fh, track.hint);
 		if(track.track == MP4_INVALID_TRACK_ID) continue;
@@ -75,21 +75,22 @@ int VideoGetTracks(VideoContext * context)
 				track.packetLength = track.clock = 0;
 		} else if(!strcmp(MP4GetTrackType(context->fh, track.track), MP4_VIDEO_TRACK_TYPE))
 		{
+			const char * sdp = MP4GetHintTrackSdp(context->fh, context->video.base.hint);
+			const char * fmtp = strstr(sdp, "fmtp");
+
 			video = 1;
 			memcpy(&context->video.base, &track, sizeof(TrackProperties));
 
 			
-			const char * sdp = MP4GetHintTrackSdp(context->fh, context->video.base.hint);
-
-			const char * fmtp = strstr(sdp, "fmtp");
 			if(fmtp)
 			{
+				const char * eol;
 				// finds beginning of 'fmtp' value;
-				 
+ 
 				for(fmtp += 5; *fmtp != ' '; ++fmtp);
 				++fmtp;
 
-				const char * eol = fmtp;
+				eol = fmtp;
 				for(;*eol != '\r' && *eol != '\n'; ++eol);
 				context->video.fmtp = malloc(1 + eol - fmtp);
 				strncpy(context->video.fmtp, fmtp, eol - fmtp);
@@ -102,19 +103,19 @@ int VideoGetTracks(VideoContext * context)
 }
 
 // returns: 1 = has more data, 0 = end-of-stream or failure
-int VideoGetVideoPacket(VideoContext * ctx, char * buffer, int * size)
+int VideoGetVideoPacket(VideoContext * ctx, char * buffer, u_int * size)
 {
 	return VideoGetPacket(ctx->fh, ctx->video.base.hint, &ctx->video.base.runtime, TRUE, buffer, size);
 }
 
 // returns: 1 = has more data, 0 = end-of-stream or failure
-int VideoGetAudioPacket(VideoContext * ctx, char * buffer, int * size)
+int VideoGetAudioPacket(VideoContext * ctx, char * buffer, u_int * size)
 {
 	return VideoGetPacket(ctx->fh, ctx->audio.hint, &ctx->audio.runtime, FALSE, buffer, size);
 }
 
 static int VideoGetPacket(MP4FileHandle fh, MP4TrackId hint, RuntimeProperties * rt,
-													int header, char * buffer, int * size)
+													int header, char * buffer, u_int * size)
 {
 	if(rt->frame == 0 || rt->packet == rt->packetsPerFrame)
 	{
@@ -123,7 +124,7 @@ static int VideoGetPacket(MP4FileHandle fh, MP4TrackId hint, RuntimeProperties *
 		rt->packet = 0;
 	}
 
-	if(!MP4ReadRtpPacket(fh, hint, rt->packet++, &buffer, size, 0, header, TRUE))
+	if(!MP4ReadRtpPacket(fh, hint, rt->packet++, (u_int8_t **) &buffer, size, 0, header, TRUE))
 		return FALSE;
 	return TRUE;
 }
