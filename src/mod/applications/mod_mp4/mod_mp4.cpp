@@ -326,10 +326,10 @@ SWITCH_STANDARD_APP(play_mp4_function)
 
 	while (switch_channel_ready(channel))
 	{
-		u_int vBytes = vid_frame.buflen;
-		u_int aBytes = write_frame.buflen;
-		bool vOk = vc.getVideoPacket(vid_frame.packet, vBytes);
-		bool aOk = vc.getAudioPacket(write_frame.data, aBytes);
+		vid_frame.packetlen = vid_frame.buflen;
+		write_frame.datalen = write_frame.buflen;
+		bool vOk = vc.getVideoPacket(vid_frame.packet, vid_frame.packetlen);
+		bool aOk = vc.getAudioPacket(write_frame.data, write_frame.datalen);
 		
 		if (!vOk && !aOk) 
 			break;
@@ -341,27 +341,28 @@ SWITCH_STANDARD_APP(play_mp4_function)
 			// Adjusts timestamp to standard 90KHz clock.
 			ts = ntohl(hdr->ts) * 90000 / vc.videoTrack().track.clock;
 			hdr->ts = htonl(ts);
-			if (pt) {
+			if (pt)
 				hdr->pt = pt;
-			}
+
 			if (switch_channel_test_flag(channel, CF_VIDEO))
 			{
 				switch_byte_t *data = (switch_byte_t *) vid_frame.packet;
 
 				vid_frame.data = data + 12;
-				vid_frame.datalen = vBytes - 12;
+				vid_frame.datalen = vid_frame.packetlen - 12;
 				switch_core_session_write_video_frame(session, &vid_frame, SWITCH_IO_FLAG_NONE, 0);
 			}
 			if (ts && last && last != ts) {
 				switch_cond_next();
 			}
 			last = ts;
-		} else if(aOk)
-		{
-			if (aBytes > (int) write_frame.buflen)
-				aBytes = write_frame.buflen;
+		}
 
-			write_frame.datalen = aBytes;
+		if(aOk)
+		{
+			if (write_frame.datalen > (int) write_frame.buflen)
+				write_frame.datalen = write_frame.buflen;
+
 			switch_core_session_write_frame(session, &write_frame, SWITCH_IO_FLAG_NONE, 0);
 			switch_core_timer_next(&timer);
 		}
