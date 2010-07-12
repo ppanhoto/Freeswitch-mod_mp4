@@ -19,112 +19,110 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 
 */
 
-#include "mp4_helper.h"
+#include "mp4_helper.hpp"
 
-static int VideoGetPacket(MP4FileHandle fh, MP4TrackId hint, RuntimeProperties * rt,
-													int header, char * buffer, u_int * size);
-
-
-VideoContext * VideoOpen(const char * file)
+namespace MP4
 {
-	VideoContext * vc;
-	MP4FileHandle fh = MP4Read(file, 0);
-	if(fh == MP4_INVALID_FILE_HANDLE)
-		return NULL;
 	
-	vc = malloc(sizeof(VideoContext));
-	memset(vc, 0, sizeof vc);
-	vc->fh = fh;
-	return vc;
-}
-
-void VideoClose(VideoContext * context)
-{
-	if(context == NULL)
-		return;
-	MP4Close(context->fh);
-	
-	free(context->video.fmtp);
-	free(context);
-}
-
-int VideoGetTracks(VideoContext * context)
-{
-	TrackProperties track;
-	int i=0;
-	int audio = 0, video = 0;
-
-	if(context == NULL) return 0;
-
-	while((track.hint = MP4FindTrackId(context->fh, i++, MP4_HINT_TRACK_TYPE, 0)) != MP4_INVALID_TRACK_ID)
+	Context::Context(const char * file)
 	{
-		MP4GetHintTrackRtpPayload(context->fh, track.hint, &track.codecName, &track.payload, NULL, NULL);
+		open(file);
+	}
+	
+	Context::~Context()
+	{
+		close();
+	}
 
-		track.track = MP4GetHintTrackReferenceTrackId(context->fh, track.hint);
-		if(track.track == MP4_INVALID_TRACK_ID) continue;
-		track.clock = MP4GetTrackTimeScale(context->fh, track.hint);
+	bool Context::open(const char * file)
+	{
+		fh = MP4Read(file, 0);
+		return fh != MP4_INVALID_FILE_HANDLE && getTracks();
+	}
 
-		if(!strcmp(MP4GetTrackType(context->fh, track.track), MP4_AUDIO_TRACK_TYPE))
+	void Context::close()
+	{
+		if(!isOpen())
+			return;
+		MP4Close(fh);
+	}
+
+	bool Context::getTracks()
+	{
+		int i = 0;
+		bool audioTrack = false, videoTrack = false;
+
+		if(!isOpen()) return false;
+
+		while(true)
 		{
-			audio = 1;
-			memcpy(&context->audio, &track, sizeof(TrackProperties));
+			TrackProperties track;
+			if((track.hint = MP4FindTrackId(fh, i++, MP4_HINT_TRACK_TYPE, 0)) == MP4_INVALID_TRACK_ID)
+				break;
 
-			if(!strncmp(context->audio.codecName, "PCM", 3))
-				track.packetLength = 20;
-			else
-				track.packetLength = track.clock = 0;
-		} else if(!strcmp(MP4GetTrackType(context->fh, track.track), MP4_VIDEO_TRACK_TYPE))
-		{
-			const char * sdp = MP4GetHintTrackSdp(context->fh, context->video.base.hint);
-			const char * fmtp = strstr(sdp, "fmtp");
+			MP4GetHintTrackRtpPayload(fh, track.hint, &track.codecName, &track.payload, NULL, NULL);
 
-			video = 1;
-			memcpy(&context->video.base, &track, sizeof(TrackProperties));
+			track.track = MP4GetHintTrackReferenceTrackId(fh, track.hint);
+			if(track.track == MP4_INVALID_TRACK_ID) continue;
+			track.clock = MP4GetTrackTimeScale(fh, track.hint);
 
-			
-			if(fmtp)
+			if(!strcmp(MP4GetTrackType(fh, track.track), MP4_AUDIO_TRACK_TYPE))
 			{
-				const char * eol;
-				// finds beginning of 'fmtp' value;
- 
-				for(fmtp += 5; *fmtp != ' '; ++fmtp);
-				++fmtp;
+				audioTrack = true;
 
-				eol = fmtp;
-				for(;*eol != '\r' && *eol != '\n'; ++eol);
-				context->video.fmtp = malloc(1 + eol - fmtp);
-				strncpy(context->video.fmtp, fmtp, eol - fmtp);
-				context->video.fmtp[eol - fmtp] = 0;
+				if(!strncmp(track.codecName, "PCM", 3))
+					track.packetLength = 20;
+				else
+					track.packetLength = track.clock = 0;
+
+				audio = track;
+			} else if(!strcmp(MP4GetTrackType(fh, track.track), MP4_VIDEO_TRACK_TYPE))
+			{
+				videoTrack = true;
+
+				const char * sdp = MP4GetHintTrackSdp(fh, track.hint);
+				const char * fmtp = strstr(sdp, "fmtp");
+
+				if(fmtp)
+				{
+					// finds beginning of 'fmtp' value;
+					for(fmtp += 5; *fmtp != ' '; ++fmtp);
+					++fmtp;
+
+					const char * eol = fmtp;
+					for(;*eol != '\r' && *eol != '\n'; ++eol);
+					video.fmtp = std::string(fmtp, eol);
+				}
+				video.track = track;
 			}
 		}
+
+		return audioTrack && videoTrack;
 	}
-	
-	return audio && video;
-}
 
-// returns: 1 = has more data, 0 = end-of-stream or failure
-int VideoGetVideoPacket(VideoContext * ctx, char * buffer, u_int * size)
-{
-	return VideoGetPacket(ctx->fh, ctx->video.base.hint, &ctx->video.base.runtime, TRUE, buffer, size);
-}
-
-// returns: 1 = has more data, 0 = end-of-stream or failure
-int VideoGetAudioPacket(VideoContext * ctx, char * buffer, u_int * size)
-{
-	return VideoGetPacket(ctx->fh, ctx->audio.hint, &ctx->audio.runtime, FALSE, buffer, size);
-}
-
-static int VideoGetPacket(MP4FileHandle fh, MP4TrackId hint, RuntimeProperties * rt,
-													int header, char * buffer, u_int * size)
-{
-	if(rt->frame == 0 || rt->packet == rt->packetsPerFrame)
+	bool Context::getVideoPacket(void * buffer, u_int & size)
 	{
-		if(!MP4ReadRtpHint(fh, hint, ++rt->frame, &rt->packetsPerFrame))
-			return FALSE;
-		rt->packet = 0;
+		return getPacket(video.track.hint, video.track.runtime, true, buffer, size);
 	}
 
-	if(!MP4ReadRtpPacket(fh, hint, rt->packet++, (u_int8_t **) &buffer, size, 0, header, TRUE))
-		return FALSE;
-	return TRUE;
+	bool Context::getAudioPacket(void * buffer, u_int & size)
+	{
+		return getPacket(audio.hint, audio.runtime, false, buffer, size);
+	}
+
+	bool Context::getPacket(MP4TrackId hint, RuntimeProperties & rt,
+				bool header, void * buffer, u_int & size)
+	{
+		if(rt.frame == 0 || rt.packet == rt.packetsPerFrame)
+		{
+			if(!MP4ReadRtpHint(fh, hint, ++rt.frame, &rt.packetsPerFrame))
+				return false;
+			rt.packet = 0;
+		}
+
+		if(!MP4ReadRtpPacket(fh, hint, rt.packet++, (u_int8_t **) &buffer, &size, 0, header, true))
+			return false;
+		return true;
+	}
+
 }

@@ -32,7 +32,7 @@
  */
 
 #include <switch.h>
-#include "mp4_helper.h"
+#include "mp4_helper.hpp"
 
 SWITCH_MODULE_LOAD_FUNCTION(mod_mp4_load);
 SWITCH_MODULE_DEFINITION(mod_mp4, mod_mp4_load, NULL, NULL);
@@ -58,7 +58,7 @@ struct record_helper {
 
 static void *SWITCH_THREAD_FUNC record_video_thread(switch_thread_t *thread, void *obj)
 {
-	struct record_helper *eh = obj;
+	record_helper *eh = reinterpret_cast<record_helper *>(obj);
 	switch_core_session_t *session = eh->session;
 	switch_channel_t *channel = switch_core_session_get_channel(session);
 	switch_status_t status;
@@ -110,7 +110,7 @@ SWITCH_STANDARD_APP(record_mp4_function)
 	int fd;
 	switch_mutex_t *mutex = NULL;
 	switch_codec_t codec, *vid_codec;
-	switch_codec_implementation_t read_impl = { 0 };
+	switch_codec_implementation_t read_impl = { };
 	int count = 0, sanity = 30;
 
 	switch_core_session_get_read_impl(session, &read_impl);
@@ -247,28 +247,28 @@ SWITCH_STANDARD_APP(play_mp4_function)
 	uint32_t ts = 0, last = 0;
 	switch_timer_t timer = { 0 };
 	switch_payload_t pt = 0;
-	switch_codec_implementation_t read_impl = { 0 };
-	VideoContext * vc;
+	switch_codec_implementation_t read_impl = {};
+	MP4::Context vc((char *) data);
 
 	switch_core_session_get_read_impl(session, &read_impl);
 
-	aud_buffer = switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
-	vid_buffer = switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
+	aud_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
+	vid_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
 
-	if ((vc = VideoOpen((char *) data)) == NULL)
+	if (!vc.isOpen())
 	{
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Error opening file %s\n", (char *) data);
 		return;
 	}
 	
-	if(!VideoGetTracks(vc))
+	if(!vc.isSupported())
 	{
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
 			"Error reading track info. Maybe this file is not hinted.\n");
 		goto end;
 	}
 
-	switch_channel_set_variable(channel, "sip_force_video_fmtp", vc->video.fmtp);
+	switch_channel_set_variable(channel, "sip_force_video_fmtp", vc.videoTrack().fmtp.c_str());
 	switch_channel_answer(channel);
 
 	if ((read_vid_codec = switch_core_session_get_video_read_codec(session)))
@@ -295,10 +295,10 @@ SWITCH_STANDARD_APP(play_mp4_function)
 	}
 
 	if (switch_core_codec_init(&codec,
-							   vc->audio.codecName,
+							   vc.audioTrack().codecName,
 							   NULL,
-							   vc->audio.clock,
-							   vc->audio.packetLength,
+							   vc.audioTrack().clock,
+							   vc.audioTrack().packetLength,
 							   1, SWITCH_CODEC_FLAG_ENCODE | SWITCH_CODEC_FLAG_DECODE,
 							   NULL, switch_core_session_get_pool(session)) == SWITCH_STATUS_SUCCESS)
 	{
@@ -310,7 +310,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 	}
 
 	if (switch_core_codec_init(&vid_codec,
-							   vc->video.base.codecName,
+							   vc.videoTrack().track.codecName,
 							   NULL,
 							   0,
 							   0,
@@ -326,20 +326,20 @@ SWITCH_STANDARD_APP(play_mp4_function)
 
 	while (switch_channel_ready(channel))
 	{
-		int vBytes = vid_frame.buflen;
-		int aBytes = write_frame.buflen;
-		int vOk = VideoGetVideoPacket(vc, vid_frame.packet, &vBytes);
-		int aOk = VideoGetAudioPacket(vc, write_frame.data, &aBytes);
+		u_int vBytes = vid_frame.buflen;
+		u_int aBytes = write_frame.buflen;
+		bool vOk = vc.getVideoPacket(vid_frame.packet, vBytes);
+		bool aOk = vc.getAudioPacket(write_frame.data, aBytes);
 		
 		if (!vOk && !aOk) 
 			break;
 
 		if (vOk)
 		{
-			switch_rtp_hdr_t *hdr = vid_frame.packet;
+			switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(vid_frame.packet);
 
 			// Adjusts timestamp to standard 90KHz clock.
-			ts = ntohl(hdr->ts) * 90000 / vc->video.base.clock;
+			ts = ntohl(hdr->ts) * 90000 / vc.videoTrack().track.clock;
 			hdr->ts = htonl(ts);
 			if (pt) {
 				hdr->pt = pt;
@@ -383,9 +383,10 @@ SWITCH_STANDARD_APP(play_mp4_function)
 
 		if (switch_core_codec_ready(&vid_codec))
 		switch_core_codec_destroy(&vid_codec);
-
-		if (vc)
+		/*
+		if (vc.isOpen())
 		VideoClose(vc);
+		*/
 
 }
 

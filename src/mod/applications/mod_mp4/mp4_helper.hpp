@@ -13,7 +13,7 @@ under the License.
 The Original Code is Video File Abstraction Library to Freeswitch
 
 The Initial Developer of the Original Code is 
-Paulo Rogério Panhoto <paulo@voicetechnology.com.br>.
+Paulo Rogério Panhoto <paulo@voicetechnology.com.br>.(u_int8_t*)
 Portions created by Paulo Rogério Panhoto are 
 Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 
@@ -23,56 +23,95 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 #define MP4_HELPER_HPP_
 
 #include <mp4.h>
+#include <string>
 
-struct RuntimeProperties
+namespace MP4
 {
-	u_int32_t frame; // sampleID
-	u_int16_t packetsPerFrame;
-	u_int16_t packet; // packetID
-};
+
+	struct RuntimeProperties
+	{
+		u_int32_t frame; // sampleID
+		u_int16_t packetsPerFrame;
+		u_int16_t packet; // packetID
+
+		RuntimeProperties(): frame(0), packetsPerFrame(0), packet(0)
+		{
+		}
+	};
 
 
-struct TrackProperties
-{
-	MP4TrackId hint;
-	MP4TrackId track;
-	
-	char * codecName;
-	u_int8_t payload;
-	u_int32_t clock;
-	u_int32_t packetLength; // packet Length in time (ms)
-	
-	RuntimeProperties runtime;
-};
+	struct TrackProperties
+	{
+		MP4TrackId hint;
+		MP4TrackId track;
 
-typedef TrackProperties AudioProperties;
+		char * codecName;
+		u_int8_t payload;
+		u_int32_t clock;
+		u_int32_t packetLength; // packet Length in time (ms)
+		
+		RuntimeProperties runtime;
 
-struct VideoProperties
-{
-	TrackProperties base;
+		TrackProperties(): hint(MP4_INVALID_TRACK_ID), track(MP4_INVALID_TRACK_ID), 
+			codecName(NULL), payload(0), clock(0), packetLength(0)
+		{
+		}
+	};
 
-	char * fmtp;
-};
+	typedef TrackProperties AudioProperties;
 
-typedef struct
-{
-	MP4FileHandle fh;
-	AudioProperties audio;
+	struct VideoProperties
+	{
+		TrackProperties track;
+		std::string fmtp;
 
-	VideoProperties video;
-	
-} VideoContext;
+		VideoProperties()
+		{
+		}
 
-VideoContext * VideoOpen(const char * file);
-void VideoClose(VideoContext * ctx);
+		VideoProperties(const TrackProperties & rhs): track(rhs)
+		{
+		}
+	};
 
-// returns: TRUE = success, FALSE = failure.
-int VideoGetTracks(VideoContext * ctx);
+	class Context
+	{
+	public:
 
-// returns: TRUE = has more data, FALSE = end-of-stream or failure
-int VideoGetVideoPacket(VideoContext * ctx, char * buffer, u_int * size);
+		Context(const char * file);
+		~Context();
 
-// returns: TRUE = has more data, FALSE = end-of-stream or failure
-int VideoGetAudioPacket(VideoContext * ctx, char * buffer, u_int * size);
+		bool open(const char * file);
 
+		void close();
+
+		// returns: TRUE = has more data, FALSE = end-of-stream or failure
+		bool getVideoPacket(void * buffer, u_int & size);
+
+		// returns: TRUE = has more data, FALSE = end-of-stream or failure
+		bool getAudioPacket(void * buffer, u_int & size);
+
+		bool isOpen() const { return fh != MP4_INVALID_FILE_HANDLE; }
+
+		bool isSupported() const { return audio.track != MP4_INVALID_TRACK_ID && video.track.track != MP4_INVALID_TRACK_ID; }
+
+		const AudioProperties & audioTrack() const { return audio; }
+
+		const VideoProperties & videoTrack() const { return video; }
+
+	private:
+		MP4FileHandle fh;
+		AudioProperties audio;
+
+		VideoProperties video;
+
+		// Prevent copy construction.
+		Context(const Context &);
+
+		bool getPacket(MP4TrackId hint, RuntimeProperties & rt,
+				bool header, void * buffer, u_int & size);
+
+		bool getTracks();
+	};
+}
 #endif
