@@ -34,6 +34,7 @@
 #include <switch.h>
 #include "mp4_helper.hpp"
 
+
 #ifndef min
 #define min(x, y) ((x) < (y) ? (x) : (y))
 #endif
@@ -241,6 +242,78 @@ SWITCH_STANDARD_APP(record_mp4_function)
 
 }
 
+struct PlayThreadParams
+{
+	switch_core_session_t * session;
+	switch_channel_t *channel;
+	switch_timer_t * timer;
+	switch_frame_t * frame;
+	bool video;
+	switch_payload_t pt;
+	MP4::Context * vc;
+};
+
+static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void *obj)
+{
+	PlayThreadParams * pt = reinterpret_cast<PlayThreadParams*>(obj);
+	u_int64_t videoNext = 0;
+	u_int64_t ts = 0;
+
+	bool ok;
+	switch_time_t loopStart = switch_time_now(), loopEnd = 0;
+
+	while (switch_channel_ready(pt->channel))
+	{
+		if(pt->video)
+		{
+			pt->frame->packetlen = pt->frame->buflen;
+			ok = pt->vc->getVideoPacket(pt->frame->packet, pt->frame->packetlen);
+			if (ok)
+			{
+				switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(pt->frame->packet);
+
+				videoNext = pt->vc->videoTrack().track.get90KTimestamp(ntohl(hdr->ts));
+				hdr->ts = htonl(videoNext);
+				if (pt->pt)
+					hdr->pt = pt->pt;
+
+				loopEnd = switch_time_now();
+				int64_t wait = videoNext - (ts + (loopEnd - loopStart) * 90 / 1000);
+				if(wait > 0) 
+				{
+					/* wait the time for the next Video frame */
+					usleep(wait * 1000 / 90);
+					ts += wait;
+				}
+				loopStart = switch_time_now();
+
+				if (switch_channel_test_flag(pt->channel, CF_VIDEO))
+				{
+					switch_byte_t *data = (switch_byte_t *) pt->frame->packet;
+
+					pt->frame->data = data + 12;
+					pt->frame->datalen = pt->frame->packetlen - 12;
+					switch_core_session_write_video_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
+				}
+			} else break;
+		} else
+		{
+			pt->frame->datalen = pt->frame->buflen;
+			ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen);
+
+			if(ok)
+			{
+				if (pt->frame->datalen > (int) pt->frame->buflen)
+					pt->frame->datalen = pt->frame->buflen;
+
+				switch_core_session_write_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
+				switch_core_timer_next(pt->timer);
+			}
+			else break;
+		}
+	}
+}
+
 SWITCH_STANDARD_APP(play_mp4_function)
 {
 	switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -330,72 +403,30 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		}
 		switch_core_session_set_read_codec(session, &codec);
 
-		u_int64_t videoNext = 0, audioNext = 0;
-		u_int64_t ts = 0;
-		
-		u_int noWaitCounter = 0;
+		PlayThreadParams vpt;
+		vpt.session = session;
+		vpt.channel = channel;
+		vpt.frame = &vid_frame;
+		vpt.timer = &timer;
+		vpt.video = true;
+		vpt.pt = pt;
+		vpt.vc = &vc;
 
-		bool videoSent = true, audioSent = true;
-		while (switch_channel_ready(channel))
-		{
-			bool vOk, aOk;
-			if(videoSent)
-			{
-				vid_frame.packetlen = vid_frame.buflen;
-				vOk = vc.getVideoPacket(vid_frame.packet, vid_frame.packetlen);
-				if (vOk)
-				{
-					switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(vid_frame.packet);
+		switch_threadattr_t * thd_attr;
+		switch_threadattr_create(&thd_attr, switch_core_session_get_pool(session));
+		switch_threadattr_detach_set(thd_attr, 1);
+		switch_threadattr_stacksize_set(thd_attr, SWITCH_THREAD_STACKSIZE);
+		switch_thread_t *thread;
+		switch_thread_create(&thread, thd_attr, play_video_thread, (void*)&vpt, switch_core_session_get_pool(session));
 
-					videoNext = vc.videoTrack().track.get90KTimestamp(ntohl(hdr->ts));
-					hdr->ts = htonl(videoNext);
-					if (pt)
-						hdr->pt = pt;
-				}
-				videoSent = false;
-			}
-			if(audioSent)
-			{
-				write_frame.datalen = write_frame.buflen;
-				aOk = vc.getAudioPacket(write_frame.data, write_frame.datalen);
-				audioSent = false;
-			}
-
-			if (!vOk && !aOk) 
-				break;
-
-
-			int64_t wait = min(audioNext, videoNext) - ts;
-			if(wait > 0) 
-			{
-				noWaitCounter = 0;
-				/* wait the time for the next A/V frame */
-				usleep(wait * 1000 / 90);
-				//switch_core_timer_next(&timer);
-				ts += wait;
-			} else if(noWaitCounter++ == 50)
-				break;
-
-			if (switch_channel_test_flag(channel, CF_VIDEO) && ts >= videoNext)
-			{
-				switch_byte_t *data = (switch_byte_t *) vid_frame.packet;
-
-				vid_frame.data = data + 12;
-				vid_frame.datalen = vid_frame.packetlen - 12;
-				switch_core_session_write_video_frame(session, &vid_frame, SWITCH_IO_FLAG_NONE, 0);
-				videoSent = true;
-			}
-
-			if(aOk && ts >= audioNext)
-			{
-				if (write_frame.datalen > (int) write_frame.buflen)
-					write_frame.datalen = write_frame.buflen;
-
-				switch_core_session_write_frame(session, &write_frame, SWITCH_IO_FLAG_NONE, 0);
-				audioSent = true;
-				audioNext += 90000 / 50;
-			}
-		}
+		PlayThreadParams apt;
+		apt.session = session;
+		apt.channel = channel;
+		apt.frame = &write_frame;
+		apt.timer = &timer;
+		apt.video = false;
+		apt.vc = &vc;
+		play_video_thread(NULL, &apt);
 
 	} catch(...)
 	{
