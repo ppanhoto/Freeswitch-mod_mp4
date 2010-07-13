@@ -34,6 +34,10 @@
 #include <switch.h>
 #include "mp4_helper.hpp"
 
+#ifndef min
+#define min(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
 SWITCH_MODULE_LOAD_FUNCTION(mod_mp4_load);
 SWITCH_MODULE_DEFINITION(mod_mp4, mod_mp4_load, NULL, NULL);
 
@@ -244,132 +248,158 @@ SWITCH_STANDARD_APP(play_mp4_function)
 	switch_codec_t codec = { 0 }, vid_codec = {0}, *read_vid_codec;
 	unsigned char *aud_buffer;
 	unsigned char *vid_buffer;
-	uint32_t ts = 0, last = 0;
 	switch_timer_t timer = { 0 };
-	switch_payload_t pt = 0;
 	switch_codec_implementation_t read_impl = {};
 	MP4::Context vc((char *) data);
+
+	switch_payload_t pt = 0;
 
 	switch_core_session_get_read_impl(session, &read_impl);
 
 	aud_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
 	vid_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
 
-	if (!vc.isOpen())
+	try
 	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Error opening file %s\n", (char *) data);
-		return;
-	}
-	
-	if(!vc.isSupported())
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
-			"Error reading track info. Maybe this file is not hinted.\n");
-		goto end;
-	}
-
-	switch_channel_set_variable(channel, "sip_force_video_fmtp", vc.videoTrack().fmtp.c_str());
-	switch_channel_answer(channel);
-
-	if ((read_vid_codec = switch_core_session_get_video_read_codec(session)))
-	{
-		pt = read_vid_codec->agreed_pt;
-	}
-
-	write_frame.codec = &codec;
-	write_frame.data = aud_buffer;
-	write_frame.buflen = SWITCH_RECOMMENDED_BUFFER_SIZE;
-
-	vid_frame.codec = &vid_codec;
-	vid_frame.packet = vid_buffer;
-	vid_frame.data = vid_buffer + 12;
-	vid_frame.buflen = SWITCH_RECOMMENDED_BUFFER_SIZE - 12;
-	switch_set_flag((&vid_frame), SFF_RAW_RTP);
-	switch_set_flag((&vid_frame), SFF_PROXY_PACKET);
-
-	if (switch_core_timer_init(&timer, "soft", read_impl.microseconds_per_packet / 1000,
-							   read_impl.samples_per_packet, switch_core_session_get_pool(session)) != SWITCH_STATUS_SUCCESS)
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Timer Activation Fail\n");
-		goto end;
-	}
-
-	if (switch_core_codec_init(&codec,
-							   vc.audioTrack().codecName,
-							   NULL,
-							   vc.audioTrack().clock,
-							   vc.audioTrack().packetLength,
-							   1, SWITCH_CODEC_FLAG_ENCODE | SWITCH_CODEC_FLAG_DECODE,
-							   NULL, switch_core_session_get_pool(session)) == SWITCH_STATUS_SUCCESS)
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Audio Codec Activation Success\n");
-	} else
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Audio Codec Activation Fail\n");
-		goto end;
-	}
-
-	if (switch_core_codec_init(&vid_codec,
-							   vc.videoTrack().track.codecName,
-							   NULL,
-							   0,
-							   0,
-							   1, SWITCH_CODEC_FLAG_ENCODE | SWITCH_CODEC_FLAG_DECODE,
-							   NULL, switch_core_session_get_pool(session)) == SWITCH_STATUS_SUCCESS) {
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Video Codec Activation Success\n");
-	} else
-	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Video Codec Activation Fail\n");
-		goto end;
-	}
-	switch_core_session_set_read_codec(session, &codec);
-
-	while (switch_channel_ready(channel))
-	{
-		vid_frame.packetlen = vid_frame.buflen;
-		write_frame.datalen = write_frame.buflen;
-		bool vOk = vc.getVideoPacket(vid_frame.packet, vid_frame.packetlen);
-		bool aOk = vc.getAudioPacket(write_frame.data, write_frame.datalen);
-		
-		if (!vOk && !aOk) 
-			break;
-
-		if (vOk)
+		if (!vc.isOpen())
 		{
-			switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(vid_frame.packet);
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Error opening file %s\n", (char *) data);
+			return;
+		}
+		
+		if(!vc.isSupported())
+		{
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
+				"Error reading track info. Maybe this file is not hinted.\n");
+			throw 1;
+		}
 
-			// Adjusts timestamp to standard 90KHz clock.
-			ts = ntohl(hdr->ts) * 90000 / vc.videoTrack().track.clock;
-			hdr->ts = htonl(ts);
-			if (pt)
-				hdr->pt = pt;
+		switch_channel_set_variable(channel, "sip_force_video_fmtp", vc.videoTrack().fmtp.c_str());
+		switch_channel_answer(channel);
 
-			if (switch_channel_test_flag(channel, CF_VIDEO))
+		if ((read_vid_codec = switch_core_session_get_video_read_codec(session)))
+		{
+			pt = read_vid_codec->agreed_pt;
+		}
+
+		write_frame.codec = &codec;
+		write_frame.data = aud_buffer;
+		write_frame.buflen = SWITCH_RECOMMENDED_BUFFER_SIZE;
+
+		vid_frame.codec = &vid_codec;
+		vid_frame.packet = vid_buffer;
+		vid_frame.data = vid_buffer + 12;
+		vid_frame.buflen = SWITCH_RECOMMENDED_BUFFER_SIZE - 12;
+		switch_set_flag((&vid_frame), SFF_RAW_RTP);
+		switch_set_flag((&vid_frame), SFF_PROXY_PACKET);
+
+		if (switch_core_timer_init(&timer, "soft", read_impl.microseconds_per_packet / 1000,
+									read_impl.samples_per_packet, switch_core_session_get_pool(session)) != SWITCH_STATUS_SUCCESS)
+		{
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Timer Activation Fail\n");
+			throw 2;
+		}
+
+		if (switch_core_codec_init(&codec,
+									vc.audioTrack().codecName,
+									NULL,
+									vc.audioTrack().clock,
+									vc.audioTrack().packetLength,
+									1, SWITCH_CODEC_FLAG_ENCODE | SWITCH_CODEC_FLAG_DECODE,
+									NULL, switch_core_session_get_pool(session)) == SWITCH_STATUS_SUCCESS)
+		{
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Audio Codec Activation Success\n");
+		} else
+		{
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Audio Codec Activation Fail\n");
+			throw 3;
+		}
+
+		if (switch_core_codec_init(&vid_codec,
+									vc.videoTrack().track.codecName,
+									NULL,
+									0,
+									0,
+									1, SWITCH_CODEC_FLAG_ENCODE | SWITCH_CODEC_FLAG_DECODE,
+									NULL, switch_core_session_get_pool(session)) == SWITCH_STATUS_SUCCESS) {
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Video Codec Activation Success\n");
+		} else
+		{
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Video Codec Activation Fail\n");
+			throw 4;
+		}
+		switch_core_session_set_read_codec(session, &codec);
+
+		u_int64_t videoNext = 0, audioNext = 0;
+		u_int64_t ts = 0;
+		
+		u_int noWaitCounter = 0;
+
+		bool videoSent = true, audioSent = true;
+		while (switch_channel_ready(channel))
+		{
+			bool vOk, aOk;
+			if(videoSent)
+			{
+				vid_frame.packetlen = vid_frame.buflen;
+				vOk = vc.getVideoPacket(vid_frame.packet, vid_frame.packetlen);
+				if (vOk)
+				{
+					switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(vid_frame.packet);
+
+					videoNext = vc.videoTrack().track.get90KTimestamp(ntohl(hdr->ts));
+					hdr->ts = htonl(videoNext);
+					if (pt)
+						hdr->pt = pt;
+				}
+				videoSent = false;
+			}
+			if(audioSent)
+			{
+				write_frame.datalen = write_frame.buflen;
+				aOk = vc.getAudioPacket(write_frame.data, write_frame.datalen);
+				audioSent = false;
+			}
+
+			if (!vOk && !aOk) 
+				break;
+
+
+			int64_t wait = min(audioNext, videoNext) - ts;
+			if(wait > 0) 
+			{
+				noWaitCounter = 0;
+				/* wait the time for the next A/V frame */
+				usleep(wait * 1000 / 90);
+				//switch_core_timer_next(&timer);
+				ts += wait;
+			} else if(noWaitCounter++ == 50)
+				break;
+
+			if (switch_channel_test_flag(channel, CF_VIDEO) && ts >= videoNext)
 			{
 				switch_byte_t *data = (switch_byte_t *) vid_frame.packet;
 
 				vid_frame.data = data + 12;
 				vid_frame.datalen = vid_frame.packetlen - 12;
 				switch_core_session_write_video_frame(session, &vid_frame, SWITCH_IO_FLAG_NONE, 0);
+				videoSent = true;
 			}
-			if (ts && last && last != ts) {
-				switch_cond_next();
+
+			if(aOk && ts >= audioNext)
+			{
+				if (write_frame.datalen > (int) write_frame.buflen)
+					write_frame.datalen = write_frame.buflen;
+
+				switch_core_session_write_frame(session, &write_frame, SWITCH_IO_FLAG_NONE, 0);
+				audioSent = true;
+				audioNext += 90000 / 50;
 			}
-			last = ts;
 		}
 
-		if(aOk)
-		{
-			if (write_frame.datalen > (int) write_frame.buflen)
-				write_frame.datalen = write_frame.buflen;
-
-			switch_core_session_write_frame(session, &write_frame, SWITCH_IO_FLAG_NONE, 0);
-			switch_core_timer_next(&timer);
-		}
-
+	} catch(...)
+	{
 	}
-
-  end:
 
 	if (timer.interval) {
 		switch_core_timer_destroy(&timer);

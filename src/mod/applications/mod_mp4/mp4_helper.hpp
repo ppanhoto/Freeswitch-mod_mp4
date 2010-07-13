@@ -56,6 +56,11 @@ namespace MP4
 			codecName(NULL), payload(0), clock(0), packetLength(0)
 		{
 		}
+		
+		u_int64_t get90KTimestamp(u_int64_t ts) const
+		{
+			return ts * 90000 / clock;
+		}
 	};
 
 	typedef TrackProperties AudioProperties;
