@@ -245,12 +245,14 @@ SWITCH_STANDARD_APP(record_mp4_function)
 struct PlayThreadParams
 {
 	switch_core_session_t * session;
-	switch_channel_t *channel;
+	switch_channel_t * channel;
 	switch_timer_t * timer;
 	switch_frame_t * frame;
+	switch_mutex_t * mutex;
 	bool video;
 	switch_payload_t pt;
 	MP4::Context * vc;
+	volatile bool done;
 };
 
 static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void *obj)
@@ -261,45 +263,57 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 
 	bool ok;
 	switch_time_t loopStart = switch_time_now(), loopEnd = 0;
-
+	bool sent = true;
+	pt->done = false;
 	while (switch_channel_ready(pt->channel))
 	{
 		if(pt->video)
 		{
-			pt->frame->packetlen = pt->frame->buflen;
-			ok = pt->vc->getVideoPacket(pt->frame->packet, pt->frame->packetlen);
-			if (ok)
+			if(sent)
 			{
-				switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(pt->frame->packet);
-
-				videoNext = pt->vc->videoTrack().track.get90KTimestamp(ntohl(hdr->ts));
-				hdr->ts = htonl(videoNext);
-				if (pt->pt)
-					hdr->pt = pt->pt;
-
-				loopEnd = switch_time_now();
-				int64_t wait = videoNext - (ts + (loopEnd - loopStart) * 90 / 1000);
-				if(wait > 0) 
+				switch_mutex_lock(pt->mutex);
+				pt->frame->packetlen = pt->frame->buflen;
+				ok = pt->vc->getVideoPacket(pt->frame->packet, pt->frame->packetlen);
+				switch_mutex_unlock(pt->mutex);
+					sent = false;
+				if (ok)
 				{
-					/* wait the time for the next Video frame */
-					usleep(wait * 1000 / 90);
-					ts += wait;
-				}
-				loopStart = switch_time_now();
+					switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(pt->frame->packet);
 
-				if (switch_channel_test_flag(pt->channel, CF_VIDEO))
+					videoNext = pt->vc->videoTrack().track.get90KTimestamp(ntohl(hdr->ts));
+					hdr->ts = htonl(videoNext);
+					if (pt->pt)
+						hdr->pt = pt->pt;
+				} else
 				{
-					switch_byte_t *data = (switch_byte_t *) pt->frame->packet;
-
-					pt->frame->data = data + 12;
-					pt->frame->datalen = pt->frame->packetlen - 12;
-					switch_core_session_write_video_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
+					break;
 				}
-			} else break;
+			}
+			loopEnd = switch_time_now();
+			int64_t wait = videoNext - (ts + (loopEnd - loopStart) * 90 / 1000);
+			if(wait > 0) 
+			{
+				/* wait the time for the next Video frame */
+				usleep(wait * 1000 / 90);
+				ts += wait;
+			}
+			loopStart = switch_time_now();
+
+			if (switch_channel_test_flag(pt->channel, CF_VIDEO))
+			{
+				switch_byte_t *data = (switch_byte_t *) pt->frame->packet;
+
+				pt->frame->data = data + 12;
+				pt->frame->datalen = pt->frame->packetlen - 12;
+				switch_core_session_write_video_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
+				sent = true;
+			}
 		} else
 		{
+			switch_mutex_lock(pt->mutex);
 			pt->frame->datalen = pt->frame->buflen;
 			ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen);
+			switch_mutex_unlock(pt->mutex);
 
 			if(ok)
 			{
@@ -312,6 +326,8 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 			else break;
 		}
 	}
+	pt->done = true;
+	return NULL;
 }
 
 SWITCH_STANDARD_APP(play_mp4_function)
@@ -411,6 +427,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		vpt.video = true;
 		vpt.pt = pt;
 		vpt.vc = &vc;
+		switch_mutex_init(&vpt.mutex, SWITCH_MUTEX_DEFAULT, switch_core_session_get_pool(session));
 
 		switch_threadattr_t * thd_attr;
 		switch_threadattr_create(&thd_attr, switch_core_session_get_pool(session));
@@ -426,8 +443,11 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		apt.timer = &timer;
 		apt.video = false;
 		apt.vc = &vc;
+		apt.mutex = vpt.mutex;
 		play_video_thread(NULL, &apt);
 
+		while(!vpt.done)
+			switch_cond_next();
 	} catch(...)
 	{
 	}
