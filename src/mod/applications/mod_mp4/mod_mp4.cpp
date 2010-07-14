@@ -264,6 +264,7 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 	bool ok;
 	bool sent = true;
 	pt->done = false;
+	switch_time_t start = switch_time_now();
 	while (switch_channel_ready(pt->channel))
 	{
 		if(pt->video)
@@ -288,21 +289,24 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 					break;
 				}
 			}
-			int64_t wait = videoNext - ts;
+
+			int64_t wait = videoNext - (ts + (switch_time_now() - start) * 90 / 1000);
 			if(wait > 0 ) 
 			{
 				/* wait the time for the next Video frame */
 				if(wait < 90000)
 				{
+					start = switch_time_now();
 					switch_sleep(wait * 1000 / 90);
+					ts += ((switch_time_now() - start) * 90 / 1000) - wait;
 				} else 
 				{
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
 						"wait = %llx, next = %llx, ts = %llx\n", wait, videoNext, ts);
-					//sent = wait > 1000000;
 				}
 				ts += wait;
-			} 
+			}
+			start = switch_time_now();
 
 			if (switch_channel_test_flag(pt->channel, CF_VIDEO))
 			{
