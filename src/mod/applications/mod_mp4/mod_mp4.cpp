@@ -262,7 +262,6 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 	u_int64_t ts = 0;
 
 	bool ok;
-	switch_time_t loopStart = switch_time_now(), loopEnd = 0;
 	bool sent = true;
 	pt->done = false;
 	while (switch_channel_ready(pt->channel))
@@ -275,12 +274,12 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 				pt->frame->packetlen = pt->frame->buflen;
 				ok = pt->vc->getVideoPacket(pt->frame->packet, pt->frame->packetlen);
 				switch_mutex_unlock(pt->mutex);
-					sent = false;
+				sent = false;
 				if (ok)
 				{
 					switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(pt->frame->packet);
 
-					videoNext = pt->vc->videoTrack().track.get90KTimestamp(ntohl(hdr->ts));
+					videoNext = pt->vc->videoTrack().track.get90KTimestamp(ntohl(hdr->ts)) & 0xffffffff;
 					hdr->ts = htonl(videoNext);
 					if (pt->pt)
 						hdr->pt = pt->pt;
@@ -289,15 +288,21 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 					break;
 				}
 			}
-			loopEnd = switch_time_now();
-			int64_t wait = videoNext - (ts + (loopEnd - loopStart) * 90 / 1000);
-			if(wait > 0) 
+			int64_t wait = videoNext - ts;
+			if(wait > 0 ) 
 			{
 				/* wait the time for the next Video frame */
-				usleep(wait * 1000 / 90);
+				if(wait < 90000)
+				{
+					switch_sleep(wait * 1000 / 90);
+				} else 
+				{
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
+						"wait = %llx, next = %llx, ts = %llx\n", wait, videoNext, ts);
+					//sent = wait > 1000000;
+				}
 				ts += wait;
-			}
-			loopStart = switch_time_now();
+			} 
 
 			if (switch_channel_test_flag(pt->channel, CF_VIDEO))
 			{
@@ -446,12 +451,16 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		apt.mutex = vpt.mutex;
 		play_video_thread(NULL, &apt);
 
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Waiting for video thread to join.\n");
 		while(!vpt.done)
+		{
 			switch_cond_next();
+		}
 	} catch(...)
 	{
 	}
 
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "All done.\n");
 	if (timer.interval) {
 		switch_core_timer_destroy(&timer);
 	}
