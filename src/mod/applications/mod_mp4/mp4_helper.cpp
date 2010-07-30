@@ -100,18 +100,18 @@ namespace MP4
 		return audioTrack && videoTrack;
 	}
 
-	bool Context::getVideoPacket(void * buffer, u_int & size)
+	bool Context::getVideoPacket(void * buffer, u_int & size, u_int & ts)
 	{
-		return getPacket(video.track.hint, video.track.runtime, true, buffer, size);
+		return getPacket(video.track.hint, video.track.runtime, true, buffer, size, ts);
 	}
 
-	bool Context::getAudioPacket(void * buffer, u_int & size)
+	bool Context::getAudioPacket(void * buffer, u_int & size, u_int & ts)
 	{
-		return getPacket(audio.hint, audio.runtime, false, buffer, size);
+		return getPacket(audio.hint, audio.runtime, false, buffer, size, ts);
 	}
 
 	bool Context::getPacket(MP4TrackId hint, RuntimeProperties & rt,
-				bool header, void * buffer, u_int & size)
+				bool header, void * buffer, u_int & size, u_int & ts)
 	{
 		if(rt.frame == 0 || rt.packet == rt.packetsPerFrame)
 		{
@@ -120,6 +120,7 @@ namespace MP4
 			rt.packet = 0;
 		}
 
+		ts = MP4GetSampleTime(fh, hint, rt.packet);
 		if(!MP4ReadRtpPacket(fh, hint, rt.packet++, (u_int8_t **) &buffer, &size, 0, header, true))
 			return false;
 		return true;

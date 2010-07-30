@@ -255,11 +255,13 @@ struct PlayThreadParams
 	volatile bool done;
 };
 
+#include <cstdio>
+
 static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void *obj)
 {
 	PlayThreadParams * pt = reinterpret_cast<PlayThreadParams*>(obj);
-	u_int64_t videoNext = 0;
-	u_int64_t ts = 0;
+	u_int next = 0, first = 0xffffffff;
+	u_int64_t ts = 0, control = 0;
 
 	bool ok;
 	bool sent = true;
@@ -273,15 +275,19 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 			{
 				switch_mutex_lock(pt->mutex);
 				pt->frame->packetlen = pt->frame->buflen;
-				ok = pt->vc->getVideoPacket(pt->frame->packet, pt->frame->packetlen);
+				ok = pt->vc->getVideoPacket(pt->frame->packet, pt->frame->packetlen, next);
 				switch_mutex_unlock(pt->mutex);
 				sent = false;
 				if (ok)
 				{
 					switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(pt->frame->packet);
-
-					videoNext = pt->vc->videoTrack().track.get90KTimestamp(ntohl(hdr->ts)) & 0xffffffff;
-					hdr->ts = htonl(videoNext);
+					next = htonl(hdr->ts);
+					if(first == 0xffffffff) first = next;
+					next -= first;
+					control = next * 90000LL / pt->vc->videoTrack().track.clock;
+					control -= first;
+					hdr->ts = htonl(control);
+					control *= 1000 / 90;
 					if (pt->pt)
 						hdr->pt = pt->pt;
 				} else
@@ -290,23 +296,24 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 				}
 			}
 
-			int64_t wait = videoNext - (ts + (switch_time_now() - start) * 90 / 1000);
+			ts = switch_time_now() - start;
+			int64_t wait = control > ts ? (control - ts) : 0;
+			//switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
+			printf(
+				"wait = %lld, next = %ld, ctrl = %lf, ts = %lf\n", wait, next, control / 1e6, ts / 1e6);
+
 			if(wait > 0 ) 
 			{
+				switch_cond_next();
 				/* wait the time for the next Video frame */
-				if(wait < 90000)
+				if(wait < 100000)
 				{
-					start = switch_time_now();
-					switch_sleep(wait * 1000 / 90);
-					ts += ((switch_time_now() - start) * 90 / 1000) - wait;
+					switch_sleep(wait);
 				} else 
 				{
-					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
-						"wait = %llx, next = %llx, ts = %llx\n", wait, videoNext, ts);
+					switch_sleep(1000000);
 				}
-				ts += wait;
 			}
-			start = switch_time_now();
 
 			if (switch_channel_test_flag(pt->channel, CF_VIDEO))
 			{
@@ -321,7 +328,7 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 		{
 			switch_mutex_lock(pt->mutex);
 			pt->frame->datalen = pt->frame->buflen;
-			ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen);
+			ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen, next);
 			switch_mutex_unlock(pt->mutex);
 
 			if(ok)

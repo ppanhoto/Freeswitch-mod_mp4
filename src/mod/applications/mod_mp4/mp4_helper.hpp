@@ -56,11 +56,6 @@ namespace MP4
 			codecName(NULL), payload(0), clock(0), packetLength(0)
 		{
 		}
-		
-		u_int64_t get90KTimestamp(u_int64_t ts) const
-		{
-			return ts * 90000 / clock;
-		}
 	};
 
 	typedef TrackProperties AudioProperties;
@@ -91,10 +86,10 @@ namespace MP4
 		void close();
 
 		// returns: TRUE = has more data, FALSE = end-of-stream or failure
-		bool getVideoPacket(void * buffer, u_int & size);
+		bool getVideoPacket(void * buffer, u_int & size, u_int & ts);
 
 		// returns: TRUE = has more data, FALSE = end-of-stream or failure
-		bool getAudioPacket(void * buffer, u_int & size);
+		bool getAudioPacket(void * buffer, u_int & size, u_int & ts);
 
 		bool isOpen() const { return fh != MP4_INVALID_FILE_HANDLE; }
 
@@ -114,7 +109,7 @@ namespace MP4
 		Context(const Context &);
 
 		bool getPacket(MP4TrackId hint, RuntimeProperties & rt,
-				bool header, void * buffer, u_int & size);
+				bool header, void * buffer, u_int & size, u_int & ts);
 
 		bool getTracks();
 	};
