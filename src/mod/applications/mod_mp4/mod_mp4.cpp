@@ -32,7 +32,7 @@
  */
 
 #include <switch.h>
-#include "mp4_helper.hpp"
+#include "mp4_helper.hpp"on with Cerys dueting﻿
 
 
 #ifndef min
@@ -287,7 +287,7 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 					control = next * 90000LL / pt->vc->videoTrack().track.clock;
 					control -= first;
 					hdr->ts = htonl(control);
-					control *= 1000 / 90;
+					control = control * 1000 / 90;
 					if (pt->pt)
 						hdr->pt = pt->pt;
 				} else
