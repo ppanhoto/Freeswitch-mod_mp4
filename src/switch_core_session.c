@@ -38,6 +38,16 @@
 
 struct switch_session_manager session_manager;
 
+SWITCH_DECLARE(void) switch_core_session_soft_lock(switch_core_session_t *session, uint32_t sec)
+{
+	session->soft_lock = sec;
+}
+
+SWITCH_DECLARE(void) switch_core_session_soft_unlock(switch_core_session_t *session)
+{
+	session->soft_lock = 0;
+}
+
 #ifdef SWITCH_DEBUG_RWLOCKS
 SWITCH_DECLARE(switch_core_session_t *) switch_core_session_perform_locate(const char *uuid_str, const char *file, const char *func, int line)
 #else
@@ -514,6 +524,14 @@ SWITCH_DECLARE(switch_call_cause_t) switch_core_session_outgoing_channel(switch_
 					switch_channel_set_originator_caller_profile(peer_channel, cloned_profile);
 				}
 			}
+
+
+			if ((profile = switch_channel_get_caller_profile(peer_channel))) {
+				if ((cloned_profile = switch_caller_profile_clone(session, profile)) != 0) {
+					switch_channel_set_origination_caller_profile(channel, cloned_profile);
+				}
+			}
+
 		}
 
 		if (switch_event_create(&event, SWITCH_EVENT_CHANNEL_OUTGOING) == SWITCH_STATUS_SUCCESS) {
@@ -1174,6 +1192,21 @@ static void *SWITCH_THREAD_FUNC switch_core_session_thread(switch_thread_t *thre
 
 	switch_core_session_run(session);
 	switch_core_media_bug_remove_all(session);
+
+	if (session->soft_lock) {
+		uint32_t loops = session->soft_lock * 10;
+
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Session %" SWITCH_SIZE_T_FMT " (%s) Soft-Locked, "
+						  "Waiting %u for external entities\n",
+						  session->id, switch_channel_get_name(session->channel), session->soft_lock);
+
+		while(--loops > 0) {
+			if (!session->soft_lock) break;
+			switch_yield(100000);
+		}
+
+	}
+
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Session %" SWITCH_SIZE_T_FMT " (%s) Locked, Waiting on external entities\n",
 					  session->id, switch_channel_get_name(session->channel));
 	switch_core_session_write_lock(session);
@@ -1357,7 +1390,7 @@ SWITCH_DECLARE(switch_core_session_t *) switch_core_session_request_xml(switch_e
 	parse_array(flag_str, flags, CF_FLAG_MAX);
 	parse_array(cap_str, caps, CC_FLAG_MAX);
 
-	if (!(session = switch_core_session_request_uuid(endpoint_interface, direction, pool, uuid))) {
+	if (!(session = switch_core_session_request_uuid(endpoint_interface, direction, SOF_NO_LIMITS, pool, uuid))) {
 		return NULL;
 	}
 
@@ -1492,6 +1525,7 @@ SWITCH_DECLARE(switch_core_session_t *) switch_core_session_request_xml(switch_e
 SWITCH_DECLARE(switch_core_session_t *) switch_core_session_request_uuid(switch_endpoint_interface_t
 																		 *endpoint_interface,
 																		 switch_call_direction_t direction,
+																		 switch_originate_flag_t originate_flags,
 																		 switch_memory_pool_t **pool, const char *use_uuid)
 {
 	switch_memory_pool_t *usepool;
@@ -1517,22 +1551,25 @@ SWITCH_DECLARE(switch_core_session_t *) switch_core_session_request_uuid(switch_
 
 	PROTECT_INTERFACE(endpoint_interface);
 
-	switch_mutex_lock(runtime.throttle_mutex);
-	count = session_manager.session_count;
-	sps = --runtime.sps;
-	switch_mutex_unlock(runtime.throttle_mutex);
+	if (!(originate_flags & SOF_NO_LIMITS)) {
+		switch_mutex_lock(runtime.throttle_mutex);
+		count = session_manager.session_count;
+		sps = --runtime.sps;
+		switch_mutex_unlock(runtime.throttle_mutex);
+		
+		if (sps <= 0) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Throttle Error! %d\n", session_manager.session_count);
+			UNPROTECT_INTERFACE(endpoint_interface);
+			return NULL;
+		}
 
-	if (sps <= 0) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Throttle Error! %d\n", session_manager.session_count);
-		UNPROTECT_INTERFACE(endpoint_interface);
-		return NULL;
+		if ((count + 1) > session_manager.session_limit) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Over Session Limit! %d\n", session_manager.session_limit);
+			UNPROTECT_INTERFACE(endpoint_interface);
+			return NULL;
+		}
 	}
 
-	if ((count + 1) > session_manager.session_limit) {
-		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Over Session Limit! %d\n", session_manager.session_limit);
-		UNPROTECT_INTERFACE(endpoint_interface);
-		return NULL;
-	}
 
 	if (pool && *pool) {
 		usepool = *pool;
@@ -1629,7 +1666,7 @@ SWITCH_DECLARE(switch_core_session_t *) switch_core_session_request_by_name(cons
 		return NULL;
 	}
 
-	session = switch_core_session_request(endpoint_interface, direction, pool);
+	session = switch_core_session_request(endpoint_interface, direction, SOF_NONE, pool);
 
 	UNPROTECT_INTERFACE(endpoint_interface);
 

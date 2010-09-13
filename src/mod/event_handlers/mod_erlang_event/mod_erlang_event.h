@@ -55,6 +55,28 @@ struct erlang_process {
 	erlang_pid pid;
 };
 
+enum reply_state { reply_not_ready, reply_waiting, reply_found, reply_timeout };
+
+struct fetch_reply_struct
+{
+	switch_thread_cond_t *ready_or_found;
+	int usecount;
+	enum reply_state state;
+	ei_x_buff *reply;
+	char winner[MAXNODELEN + 1];
+};
+typedef struct fetch_reply_struct fetch_reply_t;
+
+struct spawn_reply_struct
+{
+	switch_thread_cond_t *ready_or_found;
+	switch_mutex_t *mutex;
+	enum reply_state state;
+	erlang_pid *pid;
+	char *hash;
+};
+typedef struct spawn_reply_struct spawn_reply_t;
+
 struct session_elem {
 	char uuid_str[SWITCH_UUID_FORMATTED_LENGTH + 1];
 	switch_mutex_t *flag_mutex;
@@ -63,7 +85,10 @@ struct session_elem {
 	switch_queue_t *event_queue;
 	switch_channel_state_t channel_state;
 	switch_memory_pool_t *pool;
-	struct session_elem *next;
+	uint8_t event_list[SWITCH_EVENT_ALL + 1];
+	switch_hash_t *event_hash;
+	spawn_reply_t *spawn_reply;
+	//struct session_elem *next;
 };
 
 typedef struct session_elem session_elem_t;
@@ -103,14 +128,12 @@ struct listener {
 	switch_log_level_t level;
 	uint8_t event_list[SWITCH_EVENT_ALL + 1];
 	switch_hash_t *event_hash;
-	switch_hash_t *spawn_pid_hash;
 	switch_thread_rwlock_t *rwlock;
-	switch_mutex_t *session_mutex;
-	session_elem_t *session_list;
+	switch_thread_rwlock_t *session_rwlock;
+	//session_elem_t *session_list;
+	switch_hash_t *sessions;
 	int lost_events;
 	int lost_logs;
-	time_t last_flush;
-	uint32_t timeout;
 	uint32_t id;
 	char remote_ip[50];
 	/*switch_port_t remote_port; */
@@ -137,10 +160,11 @@ struct api_command_struct {
 };
 
 struct globals_struct {
-	switch_mutex_t *listener_mutex;
+	switch_thread_rwlock_t *listener_rwlock;
 	switch_event_node_t *node;
 	switch_mutex_t *ref_mutex;
 	switch_mutex_t *fetch_reply_mutex;
+	switch_mutex_t *listener_count_mutex;
 	switch_hash_t *fetch_reply_hash;
 	unsigned int reference0;
 	unsigned int reference1;
@@ -149,16 +173,6 @@ struct globals_struct {
 	char WAITING;				/* marker for a request waiting for a response */
 };
 typedef struct globals_struct globals_t;
-
-struct fetch_reply_struct
-{
-	switch_thread_cond_t *ready_or_found;
-	int usecount;
-	enum { reply_not_ready, reply_waiting, reply_found, reply_timeout } state;
-	ei_x_buff *reply;
-	char winner[MAXNODELEN + 1];
-};
-typedef struct fetch_reply_struct fetch_reply_t;
 
 struct listen_list_struct {
 #ifdef WIN32
@@ -246,6 +260,7 @@ switch_status_t initialise_ei(struct ei_cnode_s *ec);
 session_elem_t *attach_call_to_registered_process(listener_t *listener, char *reg_name, switch_core_session_t *session);
 session_elem_t *attach_call_to_pid(listener_t *listener, erlang_pid * pid, switch_core_session_t *session);
 session_elem_t *attach_call_to_spawned_process(listener_t *listener, char *module, char *function, switch_core_session_t *session);
+session_elem_t *find_session_elem_by_pid(listener_t *listener, erlang_pid *pid);
 void put_reply_unlock(fetch_reply_t *p, char *uuid_str);
 
 /* For Emacs:

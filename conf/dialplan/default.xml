@@ -145,6 +145,7 @@
 	<action application="hash" data="insert/${domain_name}-spymap/${caller_id_number}/${uuid}"/>
 	<action application="hash" data="insert/${domain_name}-last_dial/${caller_id_number}/${destination_number}"/>
 	<action application="hash" data="insert/${domain_name}-last_dial/global/${uuid}"/>
+	<action application="set" data="RFC2822_DATE=${strftime(%a, %d %b %Y %T %z)}"/>
       </condition>
     </extension>
 
@@ -249,6 +250,7 @@
 	<action application="bind_meta_app" data="1 b s execute_extension::dx XML features"/>
 	<action application="bind_meta_app" data="2 b s record_session::$${recordings_dir}/${caller_id_number}.${strftime(%Y-%m-%d-%H-%M-%S)}.wav"/>
 	<action application="bind_meta_app" data="3 b s execute_extension::cf XML features"/>
+	<action application="bind_meta_app" data="4 b s execute_extension::att_xfer XML features"/>
 	<action application="set" data="ringback=${us-ring}"/>
 	<action application="set" data="transfer_ringback=$${hold_music}"/>
 	<action application="set" data="call_timeout=30"/>
@@ -261,7 +263,7 @@
 	<action application="set" data="called_party_callgroup=${user_data(${dialed_extension}@${domain_name} var callgroup)}"/>
 	<!--<action application="export" data="nolocal:sip_secure_media=${user_data(${dialed_extension}@${domain_name} var sip_secure_media)}"/>-->
 	<action application="hash" data="insert/${domain_name}-last_dial/${called_party_callgroup}/${uuid}"/>
-	<action application="bridge" data="user/${dialed_extension}@${domain_name}"/>
+	<action application="bridge" data="{sip_invite_domain=$${domain}}user/${dialed_extension}@${domain_name}"/>
 	<action application="answer"/>
 	<action application="sleep" data="1000"/>
 	<action application="bridge" data="loopback/app=voicemail:default ${domain_name} ${dialed_extension}"/>
@@ -269,7 +271,7 @@
     </extension>
 
     <extension name="Local_Extension_Skinny">
-      <condition field="destination_number" expression="^(20[01][0-9])$">
+      <condition field="destination_number" expression="^(11[01][0-9])$">
         <action application="bridge" data="skinny/internal/${destination_number}"/>
       </condition>
     </extension>
@@ -595,7 +597,7 @@
     <extension name="ringback_183_uk_ring">
       <condition field="destination_number" expression="^9181$">
 	<action application="set" data="ringback=$${uk-ring}"/>
-	<action application="bridge" data="loopback/wait"/>
+	<action application="bridge" data="{ignore_early_media=true}loopback/wait"/>
       </condition>
     </extension>
 
@@ -603,7 +605,7 @@
     <extension name="ringback_183_music_ring">
       <condition field="destination_number" expression="^9182$">
 	<action application="set" data="ringback=$${hold_music}"/>
-	<action application="bridge" data="loopback/wait"/>
+	<action application="bridge" data="{ignore_early_media=true}loopback/wait"/>
       </condition>
     </extension>
 
@@ -612,7 +614,7 @@
       <condition field="destination_number" expression="^9183$">
 	<action application="set" data="transfer_ringback=$${uk-ring}"/>
 	<action application="answer"/>
-	<action application="bridge" data="loopback/wait"/>
+	<action application="bridge" data="{ignore_early_media=true}loopback/wait"/>
       </condition>
     </extension>
 
@@ -621,7 +623,7 @@
       <condition field="destination_number" expression="^9184$">
 	<action application="set" data="transfer_ringback=$${hold_music}"/>
 	<action application="answer"/>
-	<action application="bridge" data="loopback/wait"/>
+	<action application="bridge" data="{ignore_early_media=true}loopback/wait"/>
       </condition>
     </extension>
 
@@ -686,7 +688,6 @@
     <!-- install zrtp_agent.lua into scripts (ZRTP == 9787) -->
     <extension name="zrtp_enrollement">
       <condition field="destination_number" expression="^9787$">
-	<action application="answer"/>
 	<action application="lua" data="zrtp_agent.lua"/>
       </condition>
     </extension>
@@ -715,15 +716,6 @@
     -->
     <X-PRE-PROCESS cmd="include" data="default/*.xml"/>
     
-    <!--
-	WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
-	
-	Anything you put below this line will usually get ignored due to the file in 
-	default/99999_enum.xml as it will transfer the call to the enum dialplan.
-
-	WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING WARNING
-    -->
-
     <!--
     <extension name="refer">
       <condition field="${sip_refer_to}">
@@ -758,7 +750,12 @@
     </extension>
     -->
 
-    <!-- SEE WARNING ABOVE IF YOU ARE TRYING TO ADD EXTENSIONS HERE! -->
+    <extension name="enum">
+      <condition field="${module_exists(mod_enum)}" expression="true"/>
+      <condition field="destination_number" expression="^(.*)$">
+	<action application="transfer" data="$1 enum"/>
+      </condition>
+    </extension>
 
   </context>
 </include>

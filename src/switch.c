@@ -62,6 +62,7 @@ static char *pfile = PIDFILE;
 #define SERVICENAME_DEFAULT "FreeSWITCH"
 #define SERVICENAME_MAXLEN 256
 static char service_name[SERVICENAME_MAXLEN];
+static switch_core_flag_t service_flags = SCF_NONE;
 #include <winsock2.h>
 #include <windows.h>
 
@@ -174,6 +175,11 @@ void WINAPI service_main(DWORD numArgs, char **args)
 {
 	switch_core_flag_t flags = SCF_USE_SQL | SCF_USE_AUTO_NAT | SCF_CALIBRATE_CLOCK | SCF_USE_CLOCK_RT;
 	const char *err = NULL;		/* error value for return from freeswitch initialization */
+
+	/* Override flags if they have been set earlier */
+	if (service_flags != SCF_NONE)
+		flags = service_flags;
+
 	/*  we have to initialize the service-specific stuff */
 	memset(&status, 0, sizeof(SERVICE_STATUS));
 	status.dwServiceType = SERVICE_WIN32;
@@ -265,12 +271,13 @@ int main(int argc, char *argv[])
 	switch_size_t pid_len, old_pid_len;
 	const char *err = NULL;		/* error value for return from freeswitch initialization */
 #ifndef WIN32
-	int nf = 0;					/* TRUE if we are running in nofork mode */
+	int bf = 0;
 	char *runas_user = NULL;
 	char *runas_group = NULL;
 #else
 	int win32_service = 0;
 #endif
+	int nf = 0;					/* TRUE if we are running in nofork mode */
 	int nc = 0;					/* TRUE if we are running in noconsole mode */
 	pid_t pid = 0;
 	int i, x;
@@ -319,8 +326,10 @@ int main(int argc, char *argv[])
 		"\t-service [name]        -- start freeswitch as a service, cannot be used if loaded as a console app\n"
 		"\t-install [name]        -- install freeswitch as a service, with optional service name\n"
 		"\t-uninstall             -- remove freeswitch as a service\n"
+		"\t-monotonic-clock       -- use monotonic clock as timer source\n"
 #else
 		"\t-nf                    -- no forking\n"
+		"\t-bf                    -- block until fully started, then fork\n"
 		"\t-u [user]              -- specify user to switch to\n" "\t-g [group]             -- specify group to switch to\n"
 #endif
 		"\t-help                  -- this message\n" "\t-version               -- print the version and exit\n"
@@ -427,6 +436,11 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
+
+		if (local_argv[x] && !strcmp(local_argv[x], "-monotonic-clock")) {
+			flags |= SCF_USE_WIN32_MONOTONIC;
+			known_opt++;
+		}
 #else
 		if (local_argv[x] && !strcmp(local_argv[x], "-u")) {
 			x++;
@@ -446,6 +460,11 @@ int main(int argc, char *argv[])
 
 		if (local_argv[x] && !strcmp(local_argv[x], "-nf")) {
 			nf++;
+			known_opt++;
+		}
+
+		if (local_argv[x] && !strcmp(local_argv[x], "-bf")) {
+			bf++;
 			known_opt++;
 		}
 
@@ -511,8 +530,14 @@ int main(int argc, char *argv[])
 		}
 
 		if (local_argv[x] && !strcmp(local_argv[x], "-nc")) {
-			nc++;
-			known_opt++;
+			if (!nf) {
+				nc++;
+				known_opt++;
+			} else {
+				/* The flags -nc and -nf are mutually exclusive. Ignoring -nc. */
+				nc = 0;
+				known_opt++;
+			}
 		}
 
 		if (local_argv[x] && !strcmp(local_argv[x], "-c")) {
@@ -673,7 +698,7 @@ int main(int argc, char *argv[])
 #ifdef WIN32
 		FreeConsole();
 #else
-		if (!nf) {
+		if (!nf && !bf) {
 			daemonize();
 		}
 #endif
@@ -732,6 +757,8 @@ int main(int argc, char *argv[])
 				,
 				{NULL, NULL}
 			};
+			service_flags = flags; /* copy parsed flags for service startup */
+
 			if (StartServiceCtrlDispatcher(dispatchTable) == 0) {
 				/* Not loaded as a service */
 				fprintf(stderr, "Error Freeswitch loaded as a console app with -service option\n");
@@ -785,6 +812,12 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Cannot Initialize [%s]\n", err);
 		return 255;
 	}
+
+#ifndef WIN32
+	if(bf) {
+		daemonize();
+	}
+#endif
 
 	switch_core_runtime_loop(nc);
 

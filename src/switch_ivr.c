@@ -1311,7 +1311,7 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_nomedia(const char *uuid, switch_medi
 
 			if (other_channel) {
 				if (!switch_core_session_in_thread(session)) {
-					switch_channel_wait_for_state(channel, channel, CS_PARK);
+					switch_channel_wait_for_state(channel, NULL, CS_PARK);
 					switch_channel_wait_for_flag(channel, CF_REQ_MEDIA, SWITCH_FALSE, 10000, NULL);
 					switch_channel_wait_for_flag(channel, CF_MEDIA_ACK, SWITCH_TRUE, 10000, NULL);
 					switch_channel_wait_for_flag(channel, CF_MEDIA_SET, SWITCH_TRUE, 10000, NULL);
@@ -1353,6 +1353,7 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_session_transfer(switch_core_session_
 	const char *max_forwards;
 	const char *forwardvar = switch_channel_get_variable(channel, SWITCH_MAX_FORWARDS_VARIABLE);
 	int forwardval = 70;
+	const char *use_dialplan = dialplan, *use_context = context;
 
 	if (!zstr(forwardvar)) {
 		forwardval = atoi(forwardvar) - 1;
@@ -1374,41 +1375,41 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_session_transfer(switch_core_session_
 	if ((profile = switch_channel_get_caller_profile(channel))) {
 		const char *var;
 
-		if (zstr(dialplan)) {
-			dialplan = profile->dialplan;
-			if (!zstr(dialplan) && !strcasecmp(dialplan, "inline")) {
-				dialplan = NULL;
+		if (zstr(use_dialplan)) {
+			use_dialplan = profile->dialplan;
+			if (!zstr(use_dialplan) && !strcasecmp(use_dialplan, "inline")) {
+				use_dialplan = NULL;
 			}
 		}
 
-		if (zstr(context)) {
-			context = profile->context;
+		if (zstr(use_context)) {
+			use_context = profile->context;
 		}
 
-		if (zstr(dialplan)) {
-			dialplan = "XML";
+		if (zstr(use_dialplan)) {
+			use_dialplan = "XML";
 		}
 
-		if (zstr(context)) {
-			context = "default";
+		if (zstr(use_context)) {
+			use_context = "default";
 		}
 
 		if (zstr(extension)) {
 			extension = "service";
 		}
 
-		if ((var = switch_channel_get_variable(channel, "force_transfer_dialplan"))) {
-			dialplan = var;
+		if (zstr(dialplan) && (var = switch_channel_get_variable(channel, "force_transfer_dialplan"))) {
+			use_dialplan = var;
 		}
 
-		if ((var = switch_channel_get_variable(channel, "force_transfer_context"))) {
-			context = var;
+		if (zstr(context) && (var = switch_channel_get_variable(channel, "force_transfer_context"))) {
+			use_context = var;
 		}
 
 		new_profile = switch_caller_profile_clone(session, profile);
 
-		new_profile->dialplan = switch_core_strdup(new_profile->pool, dialplan);
-		new_profile->context = switch_core_strdup(new_profile->pool, context);
+		new_profile->dialplan = switch_core_strdup(new_profile->pool, use_dialplan);
+		new_profile->context = switch_core_strdup(new_profile->pool, use_context);
 		new_profile->destination_number = switch_core_strdup(new_profile->pool, extension);
 		new_profile->rdnis = switch_core_strdup(new_profile->pool, profile->destination_number);
 
@@ -1472,8 +1473,8 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_session_transfer(switch_core_session_
 		msg.from = __FILE__;
 		switch_core_session_receive_message(session, &msg);
 
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_NOTICE, "Transfer %s to %s[%s@%s]\n", switch_channel_get_name(channel), dialplan,
-						  extension, context);
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_NOTICE, "Transfer %s to %s[%s@%s]\n", switch_channel_get_name(channel), use_dialplan,
+						  extension, use_context);
 		return SWITCH_STATUS_SUCCESS;
 	}
 
@@ -2011,6 +2012,21 @@ SWITCH_DECLARE(switch_status_t) switch_ivr_generate_xml_cdr(switch_core_session_
 
 		cp_off += switch_ivr_set_xml_profile_data(x_main_cp, caller_profile, 0);
 
+		if (caller_profile->origination_caller_profile) {
+			switch_caller_profile_t *cp = NULL;
+			int off = 0;
+			if (!(x_o = switch_xml_add_child_d(x_main_cp, "origination", cp_off++))) {
+				goto error;
+			}
+
+			for (cp = caller_profile->origination_caller_profile; cp; cp = cp->next) {
+				if (!(x_caller_profile = switch_xml_add_child_d(x_o, "origination_caller_profile", off++))) {
+					goto error;
+				}
+				switch_ivr_set_xml_profile_data(x_caller_profile, cp, 0);
+			}
+		}
+
 		if (caller_profile->originator_caller_profile) {
 			switch_caller_profile_t *cp = NULL;
 			int off = 0;
@@ -2159,6 +2175,7 @@ SWITCH_DECLARE(void) switch_ivr_delay_echo(switch_core_session_t *session, uint3
 		if ((jb_frame = stfu_n_read_a_frame(jb))) {
 			write_frame.data = jb_frame->data;
 			write_frame.datalen = (uint32_t) jb_frame->dlen;
+			write_frame.buflen = (uint32_t) jb_frame->dlen;
 			status = switch_core_session_write_frame(session, &write_frame, SWITCH_IO_FLAG_NONE, 0);
 			if (!SWITCH_READ_ACCEPTABLE(status)) {
 				break;

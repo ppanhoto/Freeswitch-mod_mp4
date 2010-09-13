@@ -118,14 +118,13 @@ switch_status_t skinny_read_packet(listener_t *listener, skinny_message_t **req)
 		return SWITCH_STATUS_MEMERR;
 	}
 
-	if (!listener_is_ready(listener)) {
-		return SWITCH_STATUS_FALSE;
-	}
-
 	ptr = mbuf;
 
 	while (listener_is_ready(listener)) {
 		uint8_t do_sleep = 1;
+		if (listener->expire_time && listener->expire_time < switch_epoch_time_now(NULL)) {
+			return SWITCH_STATUS_TIMEOUT;
+		}
 		if(bytes < SKINNY_MESSAGE_FIELD_SIZE) {
 			/* We have nothing yet, get length header field */
 			mlen = SKINNY_MESSAGE_FIELD_SIZE - bytes;
@@ -136,8 +135,11 @@ switch_status_t skinny_read_packet(listener_t *listener, skinny_message_t **req)
 
 		status = switch_socket_recv(listener->sock, ptr, &mlen);
 
-		if (!listener_is_ready(listener) || (!SWITCH_STATUS_IS_BREAK(status) && status != SWITCH_STATUS_SUCCESS)) {
-			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Socket break.\n");
+		if (!listener_is_ready(listener)) {
+			break;
+		}
+		if ((status != 70007 /* APR_TIMEUP */) && !SWITCH_STATUS_IS_BREAK(status) && (status != SWITCH_STATUS_SUCCESS)) {
+			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Socket break with status=%d.\n", status);
 			return SWITCH_STATUS_FALSE;
 		}
 
@@ -167,20 +169,10 @@ switch_status_t skinny_read_packet(listener_t *listener, skinny_message_t **req)
 				}
 				if(bytes >= request->length + 2*SKINNY_MESSAGE_FIELD_SIZE) {
 					/* Message body */
-#ifdef SKINNY_MEGA_DEBUG
-					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_DEBUG,
-						"Got complete request: length=%d,reserved=%x,type=%x,data=%d\n",
-						request->length,request->reserved,request->type,request->data.as_char);
-#endif
 					*req = request;
 					return  SWITCH_STATUS_SUCCESS;
 				}
 			}
-		}
-		if (listener->expire_time && listener->expire_time < switch_epoch_time_now(NULL)) {
-			switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_INFO, "Listener timed out.\n");
-			switch_clear_flag_locked(listener, LFLAG_RUNNING);
-			return SWITCH_STATUS_FALSE;
 		}
 		if (do_sleep) {
 			switch_cond_next();
@@ -915,10 +907,12 @@ switch_status_t skinny_perform_send_reply(listener_t *listener, const char *file
 	ptr = (char *) reply;
 
 	if (listener_is_ready(listener)) {
-		switch_log_printf(SWITCH_CHANNEL_ID_LOG, file, func, line, NULL, SWITCH_LOG_DEBUG,
-			"Sending %s (type=%x,length=%d) to %s:%d.\n",
-			skinny_message_type2str(reply->type), reply->type, reply->length,
-			listener->device_name, listener->device_instance);
+		if (listener->profile->debug >= 10 || reply->type != KEEP_ALIVE_ACK_MESSAGE) {
+			switch_log_printf(SWITCH_CHANNEL_ID_LOG, file, func, line, NULL, SWITCH_LOG_DEBUG,
+				"Sending %s (type=%x,length=%d) to %s:%d.\n",
+				skinny_message_type2str(reply->type), reply->type, reply->length,
+				listener->device_name, listener->device_instance);
+		}
 		return switch_socket_send(listener->sock, ptr, &len);
 	} else {
 		switch_log_printf(SWITCH_CHANNEL_ID_LOG, file, func, line, NULL, SWITCH_LOG_WARNING,

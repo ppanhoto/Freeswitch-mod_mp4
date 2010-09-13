@@ -1001,7 +1001,13 @@ static int do_candidates(struct private_object *tech_pvt, int force)
 		cand[0].protocol = "udp";
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(tech_pvt->session), SWITCH_LOG_DEBUG, "Send Candidate %s:%d [%s]\n", cand[0].address, cand[0].port,
 						  cand[0].username);
-		tech_pvt->cand_id = ldl_session_candidates(tech_pvt->dlsession, cand, 1);
+
+		if (ldl_session_gateway(tech_pvt->dlsession) && switch_test_flag(tech_pvt, TFLAG_OUTBOUND)) {
+			tech_pvt->cand_id = ldl_session_transport(tech_pvt->dlsession, cand, 1);
+		} else {
+			tech_pvt->cand_id = ldl_session_candidates(tech_pvt->dlsession, cand, 1);
+		}
+
 		switch_set_flag_locked(tech_pvt, TFLAG_TRANSPORT);
 		switch_set_flag_locked(tech_pvt, TFLAG_RTP_READY);
 	}
@@ -1111,6 +1117,7 @@ static switch_status_t negotiate_media(switch_core_session_t *session)
 			 tech_pvt->remote_ip && tech_pvt->remote_port && switch_test_flag(tech_pvt, TFLAG_TRANSPORT))) {
 		now = switch_micro_time_now();
 		elapsed = (unsigned int) ((now - started) / 1000);
+
 
 		if (switch_channel_down(channel) || switch_test_flag(tech_pvt, TFLAG_BYE)) {
 			goto out;
@@ -1240,7 +1247,8 @@ static switch_status_t channel_on_destroy(switch_core_session_t *session)
 			tech_pvt->rtp_session = NULL;
 		}
 
-		if (globals.auto_nat && tech_pvt->profile->local_network && !switch_check_network_list_ip(tech_pvt->remote_ip, tech_pvt->profile->local_network)) {
+		if (globals.auto_nat && tech_pvt->profile->local_network && tech_pvt->remote_ip && tech_pvt->profile->local_network &&
+			!switch_check_network_list_ip(tech_pvt->remote_ip, tech_pvt->profile->local_network)) {
 			switch_nat_del_mapping((switch_port_t) tech_pvt->local_port, SWITCH_NAT_UDP);
 		}
 
@@ -1250,6 +1258,10 @@ static switch_status_t channel_on_destroy(switch_core_session_t *session)
 
 		if (switch_core_codec_ready(&tech_pvt->write_codec)) {
 			switch_core_codec_destroy(&tech_pvt->write_codec);
+		}
+
+		if (tech_pvt->dlsession) {
+			ldl_session_destroy(&tech_pvt->dlsession);
 		}
 
 		switch_thread_rwlock_unlock(tech_pvt->profile->rwlock);
@@ -1289,13 +1301,12 @@ static switch_status_t channel_on_hangup(switch_core_session_t *session)
 	if ((tech_pvt->profile->user_flags & LDL_FLAG_COMPONENT) && is_special(tech_pvt->them)) {
 		ldl_handle_send_presence(tech_pvt->profile->handle, tech_pvt->them, tech_pvt->us, NULL, NULL, "Click To Call", tech_pvt->profile->avatar);
 	}
-	if (tech_pvt->dlsession) {
-		if (!switch_test_flag(tech_pvt, TFLAG_TERM)) {
-			ldl_session_terminate(tech_pvt->dlsession);
-			switch_set_flag_locked(tech_pvt, TFLAG_TERM);
-		}
-		ldl_session_destroy(&tech_pvt->dlsession);
+
+	if (!switch_test_flag(tech_pvt, TFLAG_TERM) && tech_pvt->dlsession) {
+		ldl_session_terminate(tech_pvt->dlsession);
+		switch_set_flag_locked(tech_pvt, TFLAG_TERM);
 	}
+	
 
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "%s CHANNEL HANGUP\n", switch_channel_get_name(channel));
 
@@ -1316,15 +1327,6 @@ static switch_status_t channel_kill_channel(switch_core_session_t *session, int 
 		switch_clear_flag_locked(tech_pvt, TFLAG_IO);
 		switch_clear_flag_locked(tech_pvt, TFLAG_VOICE);
 		switch_set_flag_locked(tech_pvt, TFLAG_BYE);
-
-		if (tech_pvt->dlsession) {
-			if (!switch_test_flag(tech_pvt, TFLAG_TERM)) {
-				ldl_session_terminate(tech_pvt->dlsession);
-				switch_set_flag_locked(tech_pvt, TFLAG_TERM);
-			}
-			ldl_session_destroy(&tech_pvt->dlsession);
-
-		}
 
 		if (switch_rtp_ready(tech_pvt->rtp_session)) {
 			switch_rtp_kill_socket(tech_pvt->rtp_session);
@@ -1628,7 +1630,7 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 													switch_core_session_t **new_session, switch_memory_pool_t **pool, switch_originate_flag_t flags,
 													switch_call_cause_t *cancel_cause)
 {
-	if ((*new_session = switch_core_session_request(dingaling_endpoint_interface, SWITCH_CALL_DIRECTION_OUTBOUND, pool)) != 0) {
+	if ((*new_session = switch_core_session_request(dingaling_endpoint_interface, SWITCH_CALL_DIRECTION_OUTBOUND, flags, pool)) != 0) {
 		struct private_object *tech_pvt;
 		switch_channel_t *channel;
 		switch_caller_profile_t *caller_profile = NULL;
@@ -1643,6 +1645,8 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 		char workspace[1024] = "";
 		char *p, *u, ubuf[512] = "", *user = NULL, *f_cid_msg = NULL;
 		const char *cid_msg = NULL;
+		ldl_user_flag_t flags = LDL_FLAG_OUTBOUND;
+
 		switch_copy_string(workspace, outbound_profile->destination_number, sizeof(workspace));
 		profile_name = workspace;
 
@@ -1711,7 +1715,10 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 				terminate_session(new_session, __LINE__, SWITCH_CAUSE_DESTINATION_OUT_OF_ORDER);
 				return SWITCH_CAUSE_DESTINATION_OUT_OF_ORDER;
 			}
-			if (!(full_id = ldl_handle_probe(mdl_profile->handle, callto, user, idbuf, sizeof(idbuf)))) {
+			if (switch_stristr("voice.google.com", callto)) {
+				full_id = callto;
+				flags |= LDL_FLAG_GATEWAY;
+			} else if (!(full_id = ldl_handle_probe(mdl_profile->handle, callto, user, idbuf, sizeof(idbuf)))) {
 				switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(*new_session), SWITCH_LOG_DEBUG, "Unknown Recipient!\n");
 				terminate_session(new_session, __LINE__, SWITCH_CAUSE_NO_USER_RESPONSE);
 				return SWITCH_CAUSE_NO_USER_RESPONSE;
@@ -1768,7 +1775,7 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 		switch_stun_random_string(sess_id, 10, "0123456789");
 		tech_pvt->us = switch_core_session_strdup(*new_session, user);
 		tech_pvt->them = switch_core_session_strdup(*new_session, full_id);
-		ldl_session_create(&dlsession, mdl_profile->handle, sess_id, full_id, user, LDL_FLAG_OUTBOUND);
+		ldl_session_create(&dlsession, mdl_profile->handle, sess_id, full_id, user, flags);
 
 		if (session) {
 			switch_channel_t *calling_channel = switch_core_session_get_channel(session);
@@ -1778,6 +1785,10 @@ static switch_call_cause_t channel_outgoing_channel(switch_core_session_t *sessi
 		if (!cid_msg) {
 			f_cid_msg = switch_mprintf("Incoming Call From %s %s\n", outbound_profile->caller_id_name, outbound_profile->caller_id_number);
 			cid_msg = f_cid_msg;
+		}
+
+		if ((flags & LDL_FLAG_GATEWAY)) {
+			cid_msg = NULL;
 		}
 
 		if (cid_msg) {
@@ -2948,7 +2959,7 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 			goto done;
 		}
 
-		if ((session = switch_core_session_request(dingaling_endpoint_interface, SWITCH_CALL_DIRECTION_INBOUND, NULL)) != 0) {
+		if ((session = switch_core_session_request(dingaling_endpoint_interface, SWITCH_CALL_DIRECTION_INBOUND, SOF_NONE, NULL)) != 0) {
 			switch_core_session_add_stream(session, NULL);
 
 			if ((tech_pvt = (struct private_object *) switch_core_session_alloc(session, sizeof(struct private_object))) != 0) {
@@ -2964,6 +2975,8 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 				tech_pvt->flags |= profile->flags;
 				channel = switch_core_session_get_channel(session);
 				switch_core_session_set_private(session, tech_pvt);
+				tech_pvt->dlsession = dlsession;
+
 				tech_pvt->session = session;
 				tech_pvt->codec_index = -1;
 				tech_pvt->profile = profile;
@@ -3009,6 +3022,24 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 					cid_num = tech_pvt->recip;
 				}
 
+
+				if (switch_stristr("voice.google.com", from)) {
+					char *id = switch_core_session_strdup(session, from);
+					char *p;
+					
+					if ((p = strchr(id, '@'))) {
+						*p++ = '\0';
+						cid_name = "Google Voice";
+						cid_num = id;
+					}
+					
+					ldl_session_set_gateway(dlsession);
+					
+					do_candidates(tech_pvt, 1);
+				}
+
+
+
 				/* context of "_auto_" means set it to the domain */
 				if (profile->context && !strcmp(profile->context, "_auto_")) {
 					context = profile->name;
@@ -3031,7 +3062,7 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 
 					switch_safe_free(tmp);
 				}
-
+				
 				if (!tech_pvt->caller_profile) {
 					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG,
 									  "Creating an identity for %s %s <%s> %s\n", ldl_session_get_id(dlsession), cid_name, cid_num, exten);
@@ -3063,7 +3094,7 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 			}
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Creating a session for %s\n", ldl_session_get_id(dlsession));
 			ldl_session_set_private(dlsession, session);
-			tech_pvt->dlsession = dlsession;
+			
 			switch_channel_set_name(channel, "DingaLing/new");
 			switch_channel_set_state(channel, CS_INIT);
 			if (switch_core_session_thread_launch(session) != SWITCH_STATUS_SUCCESS) {
@@ -3128,6 +3159,11 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 		break;
 	case LDL_SIGNAL_TRANSPORT_ACCEPT:
 		switch_set_flag_locked(tech_pvt, TFLAG_TRANSPORT_ACCEPT);
+
+		if (ldl_session_gateway(dlsession)) {
+			do_candidates(tech_pvt, 1);
+		}
+
 		break;
 	case LDL_SIGNAL_INITIATE:
 		if (dl_signal) {
@@ -3209,6 +3245,7 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 					}
 				}
 			}
+
 		}
 
 		break;
@@ -3238,16 +3275,24 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 			if (profile->acl_count) {
 				for (x = 0; x < len; x++) {
 					uint32_t y = 0;
+
+					if (strcasecmp(candidates[x].protocol, "udp")) {
+						switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "candidate %s:%d has an unsupported protocol!\n",
+										  candidates[x].address, candidates[x].port);
+						continue;
+					}
+
 					for (y = 0; y < profile->acl_count; y++) {
+						
 						if (switch_check_network_list_ip(candidates[x].address, profile->acl[y])) {
 							choice = x;
 							ok = 1;
 						}
-
+						
 						if (ok) {
 							switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "candidate %s:%d PASS ACL %s\n",
 											  candidates[x].address, candidates[x].port, profile->acl[y]);
-							break;
+							goto end_candidates;
 						} else {
 							switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "candidate %s:%d FAIL ACL %s\n",
 											  candidates[x].address, candidates[x].port, profile->acl[y]);
@@ -3289,6 +3334,8 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 					}
 				}
 			}
+
+		end_candidates:
 
 			if (ok) {
 				ldl_payload_t payloads[5];
@@ -3348,6 +3395,10 @@ static ldl_status handle_signalling(ldl_handle_t *handle, ldl_session_t *dlsessi
 			goto done;
 		}
 		break;
+	case LDL_SIGNAL_REDIRECT:
+		do_describe(tech_pvt, 1);
+		break;
+
 	case LDL_SIGNAL_ERROR:
 	case LDL_SIGNAL_TERMINATE:
 		if (channel) {

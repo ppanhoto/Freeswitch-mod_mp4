@@ -92,7 +92,7 @@ const char *skinny_message_type2str(uint32_t id);
 uint32_t skinny_str2message_type(const char *str);
 #define SKINNY_PUSH_MESSAGE_TYPES SKINNY_DECLARE_PUSH_MATCH(SKINNY_MESSAGE_TYPES)
 
-extern struct skinny_table SKINNY_DEVICE_TYPES[13];
+extern struct skinny_table SKINNY_DEVICE_TYPES[15];
 const char *skinny_device_type2str(uint32_t id);
 uint32_t skinny_str2device_type(const char *str);
 #define SKINNY_PUSH_DEVICE_TYPES SKINNY_DECLARE_PUSH_MATCH(SKINNY_DEVICE_TYPES)
@@ -160,13 +160,14 @@ enum skinny_button_definition {
     SKINNY_BUTTON_LAST_NUMBER_REDIAL = 0x01,
     SKINNY_BUTTON_SPEED_DIAL = 0x02,
     SKINNY_BUTTON_HOLD = 0x03,
+    SKINNY_BUTTON_TRANSFER = 0x04,
     SKINNY_BUTTON_LINE = 0x09,
     SKINNY_BUTTON_VOICEMAIL = 0x0F,
     SKINNY_BUTTON_PRIVACY = 0x13,
     SKINNY_BUTTON_SERVICE_URL = 0x14,
     SKINNY_BUTTON_UNDEFINED = 0xFF,
 };
-extern struct skinny_table SKINNY_BUTTONS[10];
+extern struct skinny_table SKINNY_BUTTONS[11];
 const char *skinny_button2str(uint32_t id);
 uint32_t skinny_str2button(const char *str);
 #define SKINNY_PUSH_STIMULI SKINNY_DECLARE_PUSH_MATCH(SKINNY_BUTTONS)
@@ -193,6 +194,10 @@ enum skinny_soft_key_event {
     SOFTKEY_DND = 0x13,
     SOFTKEY_IDIVERT = 0x14,
 };
+extern struct skinny_table SKINNY_SOFT_KEY_EVENTS[21];
+const char *skinny_soft_key_event2str(uint32_t id);
+uint32_t skinny_str2soft_key_event(const char *str);
+#define SKINNY_PUSH_SOFT_KEY_EVENTS SKINNY_DECLARE_PUSH_MATCH(SOFT_KEY_EVENTS)
 
 enum skinny_key_set {
     SKINNY_KEY_SET_ON_HOOK = 0,

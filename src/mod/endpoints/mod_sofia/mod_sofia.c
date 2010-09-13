@@ -85,6 +85,10 @@ static switch_status_t sofia_on_init(switch_core_session_t *session)
 		sofia_glue_tech_absorb_sdp(tech_pvt);
 	}
 
+	if (sofia_test_flag(tech_pvt, TFLAG_RECOVERING) || sofia_test_flag(tech_pvt, TFLAG_RECOVERING_BRIDGE)) {
+		sofia_set_flag(tech_pvt, TFLAG_RECOVERED);
+	}
+
 	if (sofia_test_flag(tech_pvt, TFLAG_OUTBOUND) || sofia_test_flag(tech_pvt, TFLAG_RECOVERING)) {
 		const char *var;
 
@@ -458,7 +462,7 @@ switch_status_t sofia_on_hangup(switch_core_session_t *session)
 	}
 
 	if (session && tech_pvt->profile->pres_type) {
-		char *sql = switch_mprintf("delete from sip_dialogs where call_id='%q'", tech_pvt->call_id);
+		char *sql = switch_mprintf("delete from sip_dialogs where uuid='%q'", switch_core_session_get_uuid(session));
 		switch_assert(sql);
 		sofia_glue_execute_sql_now(tech_pvt->profile, &sql, SWITCH_TRUE);
 	}
@@ -697,7 +701,11 @@ static switch_status_t sofia_answer_channel(switch_core_session_t *session)
 
 	if (!sofia_test_flag(tech_pvt, TFLAG_BYE)) {
 		char *extra_headers = sofia_glue_get_extra_headers(channel, SOFIA_SIP_RESPONSE_HEADER_PREFIX);
-		char *cid = generate_pai_str(session);
+		char *cid = NULL;
+
+		if (sofia_test_pflag(tech_pvt->profile, PFLAG_PASS_CALLEE_ID)) {
+			cid = generate_pai_str(session);
+		}
 
 		if (switch_channel_test_flag(tech_pvt->channel, CF_PROXY_MODE) && tech_pvt->early_sdp && strcmp(tech_pvt->early_sdp, tech_pvt->local_sdp_str)) {
 			/* The SIP RFC for SOA forbids sending a 183 with one sdp then a 200 with another but it won't do us much good unless 
@@ -713,6 +721,7 @@ static switch_status_t sofia_answer_channel(switch_core_session_t *session)
 						TAG_IF(sticky, NUTAG_PROXY(tech_pvt->record_route)),
 						TAG_IF(cid, SIPTAG_HEADER_STR(cid)),
 						NUTAG_SESSION_TIMER(session_timeout),
+						TAG_IF(session_timeout, NUTAG_SESSION_REFRESHER(nua_remote_refresher)),
 						SIPTAG_CONTACT_STR(tech_pvt->reply_contact),
 						SIPTAG_CALL_INFO_STR(switch_channel_get_variable(tech_pvt->channel, SOFIA_SIP_HEADER_PREFIX "call_info")),
 						SOATAG_USER_SDP_STR(tech_pvt->local_sdp_str),
@@ -728,6 +737,7 @@ static switch_status_t sofia_answer_channel(switch_core_session_t *session)
 						TAG_IF(sticky, NUTAG_PROXY(tech_pvt->record_route)),
 						TAG_IF(cid, SIPTAG_HEADER_STR(cid)),
 						NUTAG_SESSION_TIMER(session_timeout),
+						TAG_IF(session_timeout, NUTAG_SESSION_REFRESHER(nua_remote_refresher)),
 						SIPTAG_CONTACT_STR(tech_pvt->reply_contact),
 						SIPTAG_CALL_INFO_STR(switch_channel_get_variable(tech_pvt->channel, SOFIA_SIP_HEADER_PREFIX "call_info")),
 						SIPTAG_CONTENT_TYPE_STR("application/sdp"),
@@ -1369,7 +1379,7 @@ static switch_status_t sofia_receive_message(switch_core_session_t *session, swi
 				} else {
 					ok = sofia_test_pflag(tech_pvt->profile, PFLAG_RTP_AUTOFLUSH_DURING_BRIDGE);
 				}
-
+				
 				if (ok) {
 					rtp_flush_read_buffer(tech_pvt->rtp_session, SWITCH_RTP_FLUSH_STICK);
 				} else {
@@ -1679,14 +1689,16 @@ static switch_status_t sofia_receive_message(switch_core_session_t *session, swi
 						to_host = switch_channel_get_variable(rchannel, "sip_to_host");
 						from_user = switch_channel_get_variable(channel, "sip_from_user");
 						from_host = switch_channel_get_variable(channel, "sip_from_host");
+						to_tag = switch_channel_get_variable(rchannel, "sip_to_tag");
+						from_tag = switch_channel_get_variable(rchannel, "sip_from_tag");
 					} else {
 						to_host = switch_channel_get_variable(channel, "sip_to_host");
 						from_user = switch_channel_get_variable(rchannel, "sip_from_user");
 						from_host = switch_channel_get_variable(rchannel, "sip_from_host");
+						from_tag = switch_channel_get_variable(rchannel, "sip_to_tag");
+						to_tag = switch_channel_get_variable(rchannel, "sip_from_tag");
 					}
 
-					to_tag = switch_channel_get_variable(rchannel, "sip_to_tag");
-					from_tag = switch_channel_get_variable(rchannel, "sip_from_tag");
 					switch_core_session_rwunlock(rsession);
 				}
 			}
@@ -1759,7 +1771,14 @@ static switch_status_t sofia_receive_message(switch_core_session_t *session, swi
 							nua_update(tech_pvt->nh,
 									   TAG_IF(!zstr_buf(message), SIPTAG_HEADER_STR(message)),
 									   TAG_IF(!zstr(tech_pvt->user_via), SIPTAG_VIA_STR(tech_pvt->user_via)), TAG_END());
-						}
+						} else if ((ua && (switch_stristr("cisco", ua)))) {
+                                                        snprintf(message, sizeof(message), "P-Asserted-Identity: \"%s\" <sip:%s@%s>", name, number, tech_pvt->profile->sipip);
+
+                                                        sofia_set_flag_locked(tech_pvt, TFLAG_UPDATING_DISPLAY);
+                                                        nua_update(tech_pvt->nh,
+                                                                           TAG_IF(!zstr_buf(message), SIPTAG_HEADER_STR(message)),
+                                                                           TAG_IF(!zstr(tech_pvt->user_via), SIPTAG_VIA_STR(tech_pvt->user_via)), TAG_END());
+                                                }
 
 						tech_pvt->last_sent_callee_id_name = switch_core_session_strdup(tech_pvt->session, name);
 						tech_pvt->last_sent_callee_id_number = switch_core_session_strdup(tech_pvt->session, number);
@@ -2156,7 +2175,11 @@ static switch_status_t sofia_receive_message(switch_core_session_t *session, swi
 
 				if (!sofia_test_flag(tech_pvt, TFLAG_BYE)) {
 					char *extra_header = sofia_glue_get_extra_headers(channel, SOFIA_SIP_PROGRESS_HEADER_PREFIX);
-					char *cid = generate_pai_str(session);
+					char *cid = NULL;
+
+					if (sofia_test_pflag(tech_pvt->profile, PFLAG_PASS_CALLEE_ID)) {
+						cid = generate_pai_str(session);
+					}
 
 					if (switch_channel_test_flag(tech_pvt->channel, CF_PROXY_MODE) &&
 						tech_pvt->early_sdp && strcmp(tech_pvt->early_sdp, tech_pvt->local_sdp_str)) {
@@ -2656,6 +2679,47 @@ static switch_status_t cmd_status(char **argv, int argc, switch_stream_handle_t 
 	return SWITCH_STATUS_SUCCESS;
 }
 
+static void xml_gateway_status(sofia_gateway_t *gp, switch_stream_handle_t *stream)
+{
+	char xmlbuf[2096];
+	const int buflen = 2096;
+
+	stream->write_function(stream, "  <gateway>\n");
+	stream->write_function(stream, "    <name>%s</name>\n", switch_str_nil(gp->name));
+	stream->write_function(stream, "    <profile>%s</profile>\n", gp->profile->name);
+	stream->write_function(stream, "    <scheme>%s</scheme>\n", switch_str_nil(gp->register_scheme));
+	stream->write_function(stream, "    <realm>%s</realm>\n", switch_str_nil(gp->register_realm));
+	stream->write_function(stream, "    <username>%s</username>\n", switch_str_nil(gp->register_username));
+	stream->write_function(stream, "    <password>%s</password>\n", zstr(gp->register_password) ? "no" : "yes");
+	stream->write_function(stream, "    <from>%s</from>\n", switch_amp_encode(switch_str_nil(gp->register_from), xmlbuf, buflen));
+	stream->write_function(stream, "    <contact>%s</contact>\n", switch_amp_encode(switch_str_nil(gp->register_contact), xmlbuf, buflen));
+	stream->write_function(stream, "    <exten>%s</exten>\n", switch_amp_encode(switch_str_nil(gp->extension), xmlbuf, buflen));
+	stream->write_function(stream, "    <to>%s</to>\n", switch_str_nil(gp->register_to));
+	stream->write_function(stream, "    <proxy>%s</proxy>\n", switch_str_nil(gp->register_proxy));
+	stream->write_function(stream, "    <context>%s</context>\n", switch_str_nil(gp->register_context));
+	stream->write_function(stream, "    <expires>%s</expires>\n", switch_str_nil(gp->expires_str));
+	stream->write_function(stream, "    <freq>%d</freq>\n", gp->freq);
+	stream->write_function(stream, "    <ping>%d</ping>\n", gp->ping);
+	stream->write_function(stream, "    <pingfreq>%d</pingfreq>\n", gp->ping_freq);
+	stream->write_function(stream, "    <state>%s</state>\n", sofia_state_names[gp->state]);
+	stream->write_function(stream, "    <status>%s%s</status>\n", status_names[gp->status], gp->pinging ? " (ping)" : "");
+	stream->write_function(stream, "    <calls-in>%d</calls-in>\n", gp->ib_calls);
+	stream->write_function(stream, "    <calls-out>%d</calls-out>\n", gp->ob_calls);
+	stream->write_function(stream, "    <failed-calls-in>%d</failed-calls-in>\n", gp->ib_failed_calls);
+	stream->write_function(stream, "    <failed-calls-out>%d</failed-calls-out>\n", gp->ob_failed_calls);
+
+	if (gp->state == REG_STATE_FAILED || gp->state == REG_STATE_TRYING) {
+		time_t now = switch_epoch_time_now(NULL);
+		if (gp->retry > now) {
+			stream->write_function(stream, "    <retry>%ds</retry>\n", gp->retry - now);
+		} else {
+			stream->write_function(stream, "    <retry>NEVER</retry>\n");
+		}
+	}
+
+	stream->write_function(stream, "  </gateway>\n");
+}
+
 static switch_status_t cmd_xml_status(char **argv, int argc, switch_stream_handle_t *stream)
 {
 	sofia_profile_t *profile = NULL;
@@ -2663,8 +2727,6 @@ static switch_status_t cmd_xml_status(char **argv, int argc, switch_stream_handl
 	switch_hash_index_t *hi;
 	void *val;
 	const void *vvar;
-	const int buflen = 2096;
-	char xmlbuf[2096];
 	int c = 0;
 	int ac = 0;
 	const char *header = "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>";
@@ -2686,24 +2748,7 @@ static switch_status_t cmd_xml_status(char **argv, int argc, switch_stream_handl
 						for (gp = profile->gateways; gp; gp = gp->next) {
 							switch_assert(gp->state < REG_STATE_LAST);
 
-							stream->write_function(stream, "\t<gateway>\n");
-							stream->write_function(stream, "\t\t<profile>%s</profile>\n", profile->name);
-							stream->write_function(stream, "\t\t<to>%s</to>\n", gp->register_to);
-							stream->write_function(stream, "\t\t<state>%s</state>\n", sofia_state_names[gp->state]);
-							stream->write_function(stream, "\t\t<calls-in>%ld</calls-in>\n", gp->ib_calls);
-							stream->write_function(stream, "\t\t<calls-out>%ld</calls-out>\n", gp->ob_calls);
-							stream->write_function(stream, "\t\t<failed-calls-in>%ld</failed-calls-in>\n", gp->ib_failed_calls);
-							stream->write_function(stream, "\t\t<failed-calls-out>%ld</failed-calls-out>\n", gp->ob_failed_calls);
-
-							if (gp->state == REG_STATE_FAILED || gp->state == REG_STATE_TRYING) {
-								time_t now = switch_epoch_time_now(NULL);
-								if (gp->retry > now) {
-									stream->write_function(stream, "\t\t<retry>%ds</retry>\n", gp->retry - now);
-								} else {
-									stream->write_function(stream, "\t\t<retry>NEVER</retry>\n");
-								}
-							}
-							stream->write_function(stream, "\t</gateway>\n");
+							xml_gateway_status(gp, stream);
 						}
 					}
 				}
@@ -2711,36 +2756,12 @@ static switch_status_t cmd_xml_status(char **argv, int argc, switch_stream_handl
 			switch_mutex_unlock(mod_sofia_globals.hash_mutex);
 			stream->write_function(stream, "</gateways>\n");
 
-			return SWITCH_STATUS_SUCCESS;
-		}
-		if (!strcasecmp(argv[0], "gateway")) {
+		} else if (argc == 1 && !strcasecmp(argv[0], "profile")) {
+		} else if (!strcasecmp(argv[0], "gateway")) {
 			if ((gp = sofia_reg_find_gateway(argv[1]))) {
 				switch_assert(gp->state < REG_STATE_LAST);
 				stream->write_function(stream, "%s\n", header);
-				stream->write_function(stream, "  <gateway>\n");
-				stream->write_function(stream, "    <name>%s</name>\n", switch_str_nil(gp->name));
-				stream->write_function(stream, "    <profile>%s</profile>\n", gp->profile->name);
-				stream->write_function(stream, "    <scheme>%s</scheme>\n", switch_str_nil(gp->register_scheme));
-				stream->write_function(stream, "    <realm>%s</realm>\n", switch_str_nil(gp->register_realm));
-				stream->write_function(stream, "    <username>%s</username>\n", switch_str_nil(gp->register_username));
-				stream->write_function(stream, "    <password>%s</password>\n", zstr(gp->register_password) ? "no" : "yes");
-				stream->write_function(stream, "    <from>%s</from>\n", switch_amp_encode(switch_str_nil(gp->register_from), xmlbuf, buflen));
-				stream->write_function(stream, "    <contact>%s</contact>\n", switch_amp_encode(switch_str_nil(gp->register_contact), xmlbuf, buflen));
-				stream->write_function(stream, "    <exten>%s</exten>\n", switch_amp_encode(switch_str_nil(gp->extension), xmlbuf, buflen));
-				stream->write_function(stream, "    <to>%s</to>\n", switch_str_nil(gp->register_to));
-				stream->write_function(stream, "    <proxy>%s</proxy>\n", switch_str_nil(gp->register_proxy));
-				stream->write_function(stream, "    <context>%s</context>\n", switch_str_nil(gp->register_context));
-				stream->write_function(stream, "    <expires>%s</expires>\n", switch_str_nil(gp->expires_str));
-				stream->write_function(stream, "    <freq>%d</freq>\n", gp->freq);
-				stream->write_function(stream, "    <ping>%d</ping>\n", gp->ping);
-				stream->write_function(stream, "    <pingfreq>%d</pingfreq>\n", gp->ping_freq);
-				stream->write_function(stream, "    <state>%s</state>\n", sofia_state_names[gp->state]);
-				stream->write_function(stream, "    <status>%s%s</status>\n", status_names[gp->status], gp->pinging ? " (ping)" : "");
-				stream->write_function(stream, "    <calls-in>%d</calls-in>\n", gp->ib_calls);
-				stream->write_function(stream, "    <calls-out>%d</calls-out>\n", gp->ob_calls);
-				stream->write_function(stream, "    <failed-calls-in>%d</failed-calls-in>\n", gp->ib_failed_calls);
-				stream->write_function(stream, "    <failed-calls-out>%d</failed-calls-out>\n", gp->ob_failed_calls);
-				stream->write_function(stream, "  </gateway>\n");
+				xml_gateway_status(gp, stream);
 				sofia_reg_release_gateway(gp);
 			} else {
 				stream->write_function(stream, "Invalid Gateway!\n");
@@ -3543,6 +3564,7 @@ SWITCH_STANDARD_API(sofia_function)
 			stream->write_function(stream, "Flushing recovery database.\n");
 		} else {
 			int x = sofia_glue_recover(SWITCH_FALSE);
+
 			if (x) {
 				stream->write_function(stream, "Recovered %d call(s)\n", x);
 			} else {
@@ -3620,7 +3642,7 @@ static switch_call_cause_t sofia_outgoing_channel(switch_core_session_t *session
 		goto error;
 	}
 
-	if (!(nsession = switch_core_session_request(sofia_endpoint_interface, SWITCH_CALL_DIRECTION_OUTBOUND, pool))) {
+	if (!(nsession = switch_core_session_request(sofia_endpoint_interface, SWITCH_CALL_DIRECTION_OUTBOUND, flags, pool))) {
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Error Creating Session\n");
 		goto error;
 	}
@@ -3781,7 +3803,12 @@ static switch_call_cause_t sofia_outgoing_channel(switch_core_session_t *session
 		}
 
 		if (!strncasecmp(dest, "sip:", 4) || !strncasecmp(dest, "sips:", 5)) {
+			char *c;
 			tech_pvt->dest = switch_core_session_strdup(nsession, dest);
+			if ((c = strchr(tech_pvt->dest, ':'))) {
+				c++;
+				tech_pvt->e_dest = switch_core_session_strdup(nsession, c);
+			}
 		} else if ((host = strchr(dest, '%'))) {
 			char buf[1024];
 			*host = '@';
@@ -3810,6 +3837,7 @@ static switch_call_cause_t sofia_outgoing_channel(switch_core_session_t *session
 		} else {
 			host++;
 			tech_pvt->dest = switch_core_session_alloc(nsession, strlen(dest) + 5);
+			tech_pvt->e_dest = switch_core_session_strdup(nsession, dest);
 			switch_snprintf(tech_pvt->dest, strlen(dest) + 5, "sip:%s", dest);
 		}
 	}
@@ -4171,40 +4199,45 @@ static void general_event_handler(switch_event_t *event)
 			const char *body = switch_event_get_body(event);
 			sofia_profile_t *profile;
 			nua_handle_t *nh;
-
+			
 			if (profile_name && ct && user && host) {
 				char *id = NULL;
 				char *contact, *p;
-				char buf[512] = "";
-
+				switch_console_callback_match_t *list = NULL;
+				switch_console_callback_match_node_t *m;
+				
 				if (!(profile = sofia_glue_find_profile(profile_name))) {
 					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Can't find profile %s\n", profile_name);
 					return;
 				}
-
-
-				if (!sofia_reg_find_reg_url(profile, user, host, buf, sizeof(buf))) {
-					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Can't find user %s@%s\n", user, host);
+				
+				if (!(list = sofia_reg_find_reg_url_multi(profile, user, host))) {
+					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_ERROR, "Can't find registered user %s@%s\n", user, host);
 					return;
 				}
 
 				id = switch_mprintf("sip:%s@%s", user, host);
 
 				switch_assert(id);
-				contact = sofia_glue_get_url_from_contact(buf, 0);
 
-				if ((p = strstr(contact, ";fs_"))) {
-					*p = '\0';
+				for (m = list->head; m; m = m->next) {
+					contact = sofia_glue_get_url_from_contact(m->val, 0);
+
+					if ((p = strstr(contact, ";fs_"))) {
+						*p = '\0';
+					}
+
+					nh = nua_handle(profile->nua,
+									NULL, NUTAG_URL(contact), SIPTAG_FROM_STR(id), SIPTAG_TO_STR(id), SIPTAG_CONTACT_STR(profile->url), TAG_END());
+
+					nua_message(nh, NUTAG_NEWSUB(1), SIPTAG_CONTENT_TYPE_STR(ct),
+								TAG_IF(!zstr(body), SIPTAG_PAYLOAD_STR(body)), TAG_IF(!zstr(subject), SIPTAG_SUBJECT_STR(subject)), TAG_END());
+
+
+					free(id);
 				}
+				switch_console_free_matches(&list);
 
-				nh = nua_handle(profile->nua,
-								NULL, NUTAG_URL(contact), SIPTAG_FROM_STR(id), SIPTAG_TO_STR(id), SIPTAG_CONTACT_STR(profile->url), TAG_END());
-
-				nua_message(nh, NUTAG_NEWSUB(1), SIPTAG_CONTENT_TYPE_STR(ct),
-							TAG_IF(!zstr(body), SIPTAG_PAYLOAD_STR(body)), TAG_IF(!zstr(subject), SIPTAG_SUBJECT_STR(subject)), TAG_END());
-
-
-				free(id);
 				sofia_glue_release_profile(profile);
 			}
 

@@ -139,6 +139,7 @@ SWITCH_BEGIN_EXTERN_C
 #define SWITCH_SOFT_HOLDING_UUID_VARIABLE "soft_holding_uuid"
 #define SWITCH_API_BRIDGE_END_VARIABLE "api_after_bridge"
 #define SWITCH_API_HANGUP_HOOK_VARIABLE "api_hangup_hook"
+#define SWITCH_API_REPORTING_HOOK_VARIABLE "api_reporting_hook"
 #define SWITCH_SESSION_IN_HANGUP_HOOK_VARIABLE "session_in_hangup_hook"
 #define SWITCH_PROCESS_CDR_VARIABLE "process_cdr"
 #define SWITCH_FORCE_PROCESS_CDR_VARIABLE "force_process_cdr"
@@ -159,6 +160,7 @@ SWITCH_BEGIN_EXTERN_C
 #define SWITCH_L_SDP_VARIABLE "switch_l_sdp"
 #define SWITCH_B_SDP_VARIABLE "switch_m_sdp"
 #define SWITCH_BRIDGE_VARIABLE "bridge_to"
+#define SWITCH_LAST_BRIDGE_VARIABLE "last_bridge_to"
 #define SWITCH_SIGNAL_BRIDGE_VARIABLE "signal_bridge_to"
 #define SWITCH_SIGNAL_BOND_VARIABLE "signal_bond"
 #define SWITCH_ORIGINATOR_VARIABLE "originator"
@@ -218,7 +220,8 @@ typedef enum {
 	SOF_NOBLOCK = (1 << 0),
 	SOF_FORKED_DIAL = (1 << 1),
 	SOF_NO_EFFECTIVE_CID_NUM = (1 << 2),
-	SOF_NO_EFFECTIVE_CID_NAME = (1 << 3)
+	SOF_NO_EFFECTIVE_CID_NAME = (1 << 3),
+	SOF_NO_LIMITS = (1 << 4)
 } switch_originate_flag_enum_t;
 typedef uint32_t switch_originate_flag_t;
 
@@ -250,7 +253,9 @@ typedef enum {
 	SCF_CALIBRATE_CLOCK = (1 << 8),
 	SCF_USE_HEAVY_TIMING = (1 << 9),
 	SCF_USE_CLOCK_RT = (1 << 10),
-	SCF_VERBOSE_EVENTS = (1 << 11)
+	SCF_VERBOSE_EVENTS = (1 << 11),
+	SCF_USE_WIN32_MONOTONIC = (1 << 12),
+	SCF_AUTO_SCHEMAS = (1 << 13)
 } switch_core_flag_enum_t;
 typedef uint32_t switch_core_flag_t;
 
@@ -474,9 +479,16 @@ typedef struct {
 	switch_size_t flush_packet_count;
 } switch_rtp_numbers_t;
 
+
+typedef struct {
+	uint32_t packet_count;
+	uint32_t octet_count;
+} switch_rtcp_numbers_t;
+
 typedef struct {
 	switch_rtp_numbers_t inbound;
 	switch_rtp_numbers_t outbound;
+	switch_rtcp_numbers_t rtcp;
 } switch_rtp_stats_t;
 
 typedef enum {
@@ -1287,7 +1299,8 @@ typedef uint32_t switch_file_flag_t;
 
 typedef enum {
 	SWITCH_IO_FLAG_NONE = 0,
-	SWITCH_IO_FLAG_NOBLOCK = (1 << 0)
+	SWITCH_IO_FLAG_NOBLOCK = (1 << 0),
+	SWITCH_IO_FLAG_SINGLE_READ = (1 << 1)
 } switch_io_flag_enum_t;
 typedef uint32_t switch_io_flag_t;
 
@@ -1724,6 +1737,8 @@ typedef struct switch_loadable_module_function_table {
 	switch_module_runtime_t runtime;
 	switch_module_flag_t flags;
 } switch_loadable_module_function_table_t;
+
+typedef int (*switch_modulename_callback_func_t) (void *user_data, const char *module_name);
 
 #define SWITCH_MODULE_DEFINITION_EX(name, load, shutdown, runtime, flags)					\
 static const char modname[] =  #name ;														\

@@ -215,6 +215,20 @@ SWITCH_DECLARE(void) switch_channel_set_originatee_caller_profile(switch_channel
 */
 SWITCH_DECLARE(switch_caller_profile_t *) switch_channel_get_originatee_caller_profile(switch_channel_t *channel);
 
+/*!
+  \brief Set the given channel's origination caller profile
+  \param channel channel to assign the profile to
+  \param caller_profile the profile to assign
+*/
+SWITCH_DECLARE(void) switch_channel_set_origination_caller_profile(switch_channel_t *channel, switch_caller_profile_t *caller_profile);
+
+/*!
+  \brief Retrive the given channel's origination caller profile
+  \param channel channel to retrive the profile from
+  \return the requested profile
+*/
+SWITCH_DECLARE(switch_caller_profile_t *) switch_channel_get_origination_caller_profile(switch_channel_t *channel);
+
 
 /*!
   \brief Retrive the given channel's unique id
@@ -561,9 +575,15 @@ SWITCH_DECLARE(void) switch_channel_set_private_flag(switch_channel_t *channel, 
 SWITCH_DECLARE(void) switch_channel_clear_private_flag(switch_channel_t *channel, uint32_t flags);
 SWITCH_DECLARE(int) switch_channel_test_private_flag(switch_channel_t *channel, uint32_t flags);
 
-SWITCH_DECLARE(void) switch_channel_set_app_flag(switch_channel_t *channel, uint32_t flags);
-SWITCH_DECLARE(void) switch_channel_clear_app_flag(switch_channel_t *channel, uint32_t flags);
-SWITCH_DECLARE(int) switch_channel_test_app_flag(switch_channel_t *channel, uint32_t flags);
+SWITCH_DECLARE(void) switch_channel_set_app_flag_key(const char *app, switch_channel_t *channel, uint32_t flags);
+SWITCH_DECLARE(void) switch_channel_clear_app_flag_key(const char *app, switch_channel_t *channel, uint32_t flags);
+SWITCH_DECLARE(int) switch_channel_test_app_flag_key(const char *app, switch_channel_t *channel, uint32_t flags);
+
+#define switch_channel_set_app_flag(_c, _f) switch_channel_set_app_flag_key(__FILE__, _c, _f)
+#define switch_channel_clear_app_flag(_c, _f) switch_channel_clear_app_flag_key(__FILE__, _c, _f)
+#define switch_channel_test_app_flag(_c, _f) switch_channel_test_app_flag_key(__FILE__, _c, _f)
+
+
 SWITCH_DECLARE(void) switch_channel_set_hangup_time(switch_channel_t *channel);
 SWITCH_DECLARE(switch_call_direction_t) switch_channel_direction(switch_channel_t *channel);
 SWITCH_DECLARE(switch_core_session_t *) switch_channel_get_session(switch_channel_t *channel);

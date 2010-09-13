@@ -176,6 +176,10 @@ typedef enum {
 	FTDM_SPAN_USE_CHAN_QUEUE = (1 << 6),
 	FTDM_SPAN_SUGGEST_CHAN_ID = (1 << 7),
 	FTDM_SPAN_USE_AV_RATE = (1 << 8),
+	/* If you use this flag, you MUST call ftdm_span_trigger_signals to deliver the user signals
+	 * after having called ftdm_send_span_signal(), which with this flag it will just enqueue the signal
+	 * for later delivery */
+	FTDM_SPAN_USE_SIGNALS_QUEUE = (1 << 9),
 } ftdm_span_flag_t;
 
 /*! \brief Channel supported features */
@@ -250,6 +254,7 @@ typedef enum {
 	FTDM_CHANNEL_USE_TX_GAIN = (1 << 26),
 	FTDM_CHANNEL_IN_ALARM = (1 << 27),
 	FTDM_CHANNEL_SIG_UP = (1 << 28),
+	FTDM_CHANNEL_USER_HANGUP = (1 << 29),
 } ftdm_channel_flag_t;
 #if defined(__cplusplus) && defined(WIN32) 
     // fix C2676 
@@ -359,6 +364,7 @@ typedef struct ftdm_bitstream ftdm_bitstream_t;
 typedef struct ftdm_fsk_modulator ftdm_fsk_modulator_t;
 typedef ftdm_status_t (*ftdm_span_start_t)(ftdm_span_t *span);
 typedef ftdm_status_t (*ftdm_span_stop_t)(ftdm_span_t *span);
+typedef ftdm_status_t (*ftdm_channel_sig_read_t)(ftdm_channel_t *ftdmchan, void *data, ftdm_size_t size);
 
 #ifdef __cplusplus
 }

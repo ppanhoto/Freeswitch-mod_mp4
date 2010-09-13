@@ -121,6 +121,25 @@ SWITCH_DECLARE(switch_codec_interface_t *) switch_loadable_module_get_codec_inte
 SWITCH_DECLARE(switch_dialplan_interface_t *) switch_loadable_module_get_dialplan_interface(const char *name);
 
 /*!
+  \brief Enumerates a list of all modules discovered in a directory
+  \param the directory to look for modules in
+  \param memory pool
+  \param callback function to call for each module found
+  \param user data argument to pass to the callback function
+  \return the resulting status
+ */
+SWITCH_DECLARE(switch_status_t) switch_loadable_module_enumerate_available(const char *dir_path, switch_modulename_callback_func_t callback, void *user_data);
+
+
+/*!
+  \brief Enumerates a list of all currently loaded modules
+  \param callback function to call for each module found
+  \param user data argument to pass to the callback function
+  \return the resulting status
+ */
+SWITCH_DECLARE(switch_status_t) switch_loadable_module_enumerate_loaded(switch_modulename_callback_func_t callback, void *user_data);
+
+/*!
   \brief build a dynamic module object and register it (for use in double embeded modules)
   \param filename the name of the modules source file
   \param switch_module_load the function to call when the module is loaded
@@ -324,13 +343,14 @@ SWITCH_MOD_DECLARE(switch_status_t) switch_module_shutdown(void);
 	break; \
 	}
 
-#define SWITCH_ADD_LIMIT(limit_int, int_name, incrptr, releaseptr, usageptr, resetptr, statusptr) \
+#define SWITCH_ADD_LIMIT(limit_int, int_name, incrptr, releaseptr, usageptr, resetptr, statusptr, interval_resetptr) \
 	for (;;) { \
 	limit_int = (switch_limit_interface_t *)switch_loadable_module_create_interface(*module_interface, SWITCH_LIMIT_INTERFACE); \
 	limit_int->incr = incrptr; \
 	limit_int->release = releaseptr; \
 	limit_int->usage = usageptr; \
 	limit_int->reset = resetptr; \
+	limit_int->interval_reset = interval_resetptr; \
 	limit_int->status = statusptr; \
 	limit_int->interface_name = int_name; \
 	break; \

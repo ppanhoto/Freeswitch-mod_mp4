@@ -427,6 +427,10 @@ static FIO_CHANNEL_REQUEST_FUNCTION(sangoma_boost_channel_request)
 	event.called.ton = caller_data->dnis.type;
 	event.called.npi = caller_data->dnis.plan;
 
+	/* we're making a contract now that FreeTDM values for capability, layer 1 and such will be the same as for boost */
+	event.bearer.capability = caller_data->bearer_capability;
+	event.bearer.uil1p = caller_data->bearer_layer1;
+
 	if (caller_data->raw_data_len) {
 		ftdm_set_string(event.custom_data, caller_data->raw_data);
 		event.custom_data_size = (uint16_t)caller_data->raw_data_len;
@@ -1054,6 +1058,9 @@ tryagain:
 
 	ftdmchan->caller_data.screen = event->calling.screening_ind;
 	ftdmchan->caller_data.pres = event->calling.presentation_ind;
+
+	ftdmchan->caller_data.bearer_capability = event->bearer.capability;
+	ftdmchan->caller_data.bearer_layer1 = event->bearer.uil1p;
 
 	/* more info about custom data: http://www.ss7box.com/smg_manual.html#ISUP-IN-RDNIS-NEW */
 	if (event->custom_data_size) {
@@ -2526,46 +2533,6 @@ static FIO_SPAN_GET_SIG_STATUS_FUNCTION(sangoma_boost_get_span_sig_status)
 	}
 	return sangoma_boost_data->sigmod->get_span_sig_status(span, status);
 }
-
-/* TODO: move these ones to a common private header so other ISDN mods can use them */
-static void ftdm_span_set_npi(const char *npi_string, uint8_t *target)
-{
-	if (!strcasecmp(npi_string, "isdn") || !strcasecmp(npi_string, "e164")) {
-		*target = FTDM_NPI_ISDN;
-	} else if (!strcasecmp(npi_string, "data")) {
-		*target = FTDM_NPI_DATA;
-	} else if (!strcasecmp(npi_string, "telex")) {
-		*target = FTDM_NPI_TELEX;
-	} else if (!strcasecmp(npi_string, "national")) {
-		*target = FTDM_NPI_NATIONAL;
-	} else if (!strcasecmp(npi_string, "private")) {
-		*target = FTDM_NPI_PRIVATE;
-	} else if (!strcasecmp(npi_string, "reserved")) {
-		*target = FTDM_NPI_RESERVED;
-	} else if (!strcasecmp(npi_string, "unknown")) {
-		*target = FTDM_NPI_UNKNOWN;
-	} else {
-		ftdm_log(FTDM_LOG_WARNING, "Invalid NPI value (%s)\n", npi_string);
-		*target = FTDM_NPI_UNKNOWN;
-	}
-}
-
-static void ftdm_span_set_ton(const char *ton_string, uint8_t *target)
-{
-	if (!strcasecmp(ton_string, "national")) {
-		*target = FTDM_TON_NATIONAL;
-	} else if (!strcasecmp(ton_string, "international")) {
-		*target = FTDM_TON_INTERNATIONAL;
-	} else if (!strcasecmp(ton_string, "local")) {
-		*target = FTDM_TON_SUBSCRIBER_NUMBER;
-	} else if (!strcasecmp(ton_string, "unknown")) {
-		*target = FTDM_TON_UNKNOWN;
-	} else {
-		ftdm_log(FTDM_LOG_WARNING, "Invalid TON value (%s)\n", ton_string);
-		*target = FTDM_TON_UNKNOWN;
-	}
-}
-
 
 /**
  * \brief Initialises an sangoma boost span from configuration variables

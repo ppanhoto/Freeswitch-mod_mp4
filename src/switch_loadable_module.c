@@ -1068,6 +1068,62 @@ SWITCH_DECLARE(switch_status_t) switch_loadable_module_unload_module(char *dir, 
 
 }
 
+SWITCH_DECLARE(switch_status_t) switch_loadable_module_enumerate_available(const char *dir_path, switch_modulename_callback_func_t callback, void *user_data)
+{
+	switch_dir_t *dir = NULL;
+	switch_status_t status;
+	char buffer[256];
+	const char *fname;
+	const char *fname_ext;
+	char *fname_base;
+
+#ifdef WIN32
+	const char *ext = ".dll";
+#else
+	const char *ext = ".so";
+#endif
+
+	if ((status = switch_dir_open(&dir, dir_path, loadable_modules.pool)) != SWITCH_STATUS_SUCCESS) {
+		return status;
+	}
+
+	while((fname = switch_dir_next_file(dir, buffer, sizeof(buffer)))) {
+		if ((fname_ext = strrchr(fname, '.'))) {
+			if (!strcmp(fname_ext, ext)) {
+				if (!(fname_base = switch_mprintf("%.*s", (int)(fname_ext-fname), fname))) {
+					status = SWITCH_STATUS_GENERR;
+					goto end;
+				}
+				callback(user_data, fname_base);
+				switch_safe_free(fname_base)
+			}
+		}
+	}
+
+
+  end:
+	switch_dir_close(dir);
+	return status;
+}
+
+SWITCH_DECLARE(switch_status_t) switch_loadable_module_enumerate_loaded(switch_modulename_callback_func_t callback, void *user_data)
+{
+	switch_hash_index_t *hi;
+	void *val;
+	switch_loadable_module_t *module;
+
+	switch_mutex_lock(loadable_modules.mutex);
+	for (hi = switch_hash_first(NULL, loadable_modules.module_hash); hi; hi = switch_hash_next(hi)) {
+		switch_hash_this(hi, NULL, NULL, &val);
+		module = (switch_loadable_module_t *) val;
+
+		callback(user_data, module->module_interface->module_name);
+	}
+	switch_mutex_unlock(loadable_modules.mutex);
+
+	return SWITCH_STATUS_SUCCESS;
+}
+
 SWITCH_DECLARE(switch_status_t) switch_loadable_module_build_dynamic(char *filename,
 																	 switch_module_load_t switch_module_load,
 																	 switch_module_runtime_t switch_module_runtime,
@@ -1221,6 +1277,7 @@ SWITCH_DECLARE(switch_status_t) switch_loadable_module_init()
 			for (ld = switch_xml_child(mods, "load"); ld; ld = ld->next) {
 				switch_bool_t global = SWITCH_FALSE;
 				const char *val = switch_xml_attr_soft(ld, "module");
+				const char *path = switch_xml_attr_soft(ld, "path");
 				const char *critical = switch_xml_attr_soft(ld, "critical");
 				const char *sglobal = switch_xml_attr_soft(ld, "global");
 				if (zstr(val) || (strchr(val, '.') && !strstr(val, ext) && !strstr(val, EXT))) {
@@ -1229,7 +1286,10 @@ SWITCH_DECLARE(switch_status_t) switch_loadable_module_init()
 				}
 				global = switch_true(sglobal);
 				
-				if (switch_loadable_module_load_module_ex((char *) SWITCH_GLOBAL_dirs.mod_dir, (char *) val, SWITCH_FALSE, global, &err) == SWITCH_STATUS_FALSE) {
+				if (path && zstr(path)) {
+					path = SWITCH_GLOBAL_dirs.mod_dir;
+				}
+				if (switch_loadable_module_load_module_ex((char *) path, (char *) val, SWITCH_FALSE, global, &err) == SWITCH_STATUS_FALSE) {
 					if (critical && switch_true(critical)) {
 						switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CRIT, "Failed to load critical module '%s', abort()\n", val);
 						abort();
@@ -1251,13 +1311,18 @@ SWITCH_DECLARE(switch_status_t) switch_loadable_module_init()
 			for (ld = switch_xml_child(mods, "load"); ld; ld = ld->next) {
 				switch_bool_t global = SWITCH_FALSE;
 				const char *val = switch_xml_attr_soft(ld, "module");
+				const char *path = switch_xml_attr_soft(ld, "path");
 				const char *sglobal = switch_xml_attr_soft(ld, "global");
 				if (zstr(val) || (strchr(val, '.') && !strstr(val, ext) && !strstr(val, EXT))) {
 					switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "Invalid extension for %s\n", val);
 					continue;
 				}
 				global = switch_true(sglobal);
-				switch_loadable_module_load_module_ex((char *) SWITCH_GLOBAL_dirs.mod_dir, (char *) val, SWITCH_FALSE, global, &err);
+
+				if (path && zstr(path)) {
+					path = SWITCH_GLOBAL_dirs.mod_dir;
+				}
+				switch_loadable_module_load_module_ex((char *) path, (char *) val, SWITCH_FALSE, global, &err);
 				count++;
 			}
 		}
@@ -1627,27 +1692,38 @@ SWITCH_DECLARE(switch_status_t) switch_api_execute(const char *cmd, const char *
 {
 	switch_api_interface_t *api;
 	switch_status_t status;
+	char *arg_used;
+	char *cmd_used;
 
 	switch_assert(stream != NULL);
 	switch_assert(stream->data != NULL);
 	switch_assert(stream->write_function != NULL);
+
+	if (strcasecmp(cmd, "console_complete")) {
+		cmd_used = switch_strip_whitespace(cmd);
+		arg_used = switch_strip_whitespace(arg);
+	} else {
+		cmd_used = (char *) cmd;
+		arg_used = (char *) arg;
+	}
+			
 
 	if (!stream->param_event) {
 		switch_event_create(&stream->param_event, SWITCH_EVENT_API);
 	}
 
 	if (stream->param_event) {
-		if (cmd) {
-			switch_event_add_header_string(stream->param_event, SWITCH_STACK_BOTTOM, "API-Command", cmd);
+		if (cmd_used) {
+			switch_event_add_header_string(stream->param_event, SWITCH_STACK_BOTTOM, "API-Command", cmd_used);
 		}
-		if (arg) {
-			switch_event_add_header_string(stream->param_event, SWITCH_STACK_BOTTOM, "API-Command-Argument", arg);
+		if (arg_used) {
+			switch_event_add_header_string(stream->param_event, SWITCH_STACK_BOTTOM, "API-Command-Argument", arg_used);
 		}
 	}
 
 
-	if (cmd && (api = switch_loadable_module_get_api_interface(cmd)) != 0) {
-		if ((status = api->function(arg, session, stream)) != SWITCH_STATUS_SUCCESS) {
+	if (cmd_used && (api = switch_loadable_module_get_api_interface(cmd_used)) != 0) {
+		if ((status = api->function(arg_used, session, stream)) != SWITCH_STATUS_SUCCESS) {
 			stream->write_function(stream, "COMMAND RETURNED ERROR!\n");
 		}
 		UNPROTECT_INTERFACE(api);
@@ -1660,6 +1736,13 @@ SWITCH_DECLARE(switch_status_t) switch_api_execute(const char *cmd, const char *
 		switch_event_fire(&stream->param_event);
 	}
 
+	if (cmd_used != cmd) {
+		switch_safe_free(cmd_used);
+	}
+	
+	if (arg_used != arg) {
+		switch_safe_free(arg_used);
+	}
 
 	return status;
 }

@@ -48,6 +48,10 @@
 #define MAX_ELEMENTS 3600
 #define IDLE_SPEED 100
 
+/* In Windows, enable the montonic timer for better timer accuracy on Windows 2003 Server, XP and older */
+/* GetSystemTimeAsFileTime does not update on timeBeginPeriod on these OS. */
+/* Flag SCF_USE_WIN32_MONOTONIC must be enabled to activate it (start parameter -monotonic-clock) */
+
 #if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
 static int MONO = 1;
 #else
@@ -66,6 +70,12 @@ static int OFFSET = 0;
 static int COND = 1;
 
 static int MATRIX = 1;
+
+#ifdef WIN32
+static switch_time_t win32_tick_time_since_start = -1;
+static DWORD win32_last_get_time_tick = 0;
+CRITICAL_SECTION  timer_section;
+#endif
 
 #define ONEMS
 #ifdef ONEMS
@@ -174,9 +184,9 @@ static switch_interval_time_t average_time(switch_interval_time_t t, int reps)
 	switch_time_t start, stop, sum = 0;
 
 	for (x = 0; x < reps; x++) {
-		start = switch_time_now();
+		start = switch_time_ref();
 		do_sleep(t);
-		stop = switch_time_now();
+		stop = switch_time_ref();
 		sum += (stop - start);
 	}
 
@@ -335,20 +345,47 @@ static switch_time_t time_now(int64_t offset)
 {
 	switch_time_t now;
 
-#if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
+#if (defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)) || defined(WIN32)
 	if (MONO) {
+#ifndef WIN32
 		struct timespec ts;
 		clock_gettime(CLOCK_MONOTONIC, &ts);
 		now = ts.tv_sec * APR_USEC_PER_SEC + (ts.tv_nsec / 1000) + offset;
+#else
+		DWORD tick_now;
+		DWORD tick_diff;
+
+		tick_now = timeGetTime();
+		if (win32_tick_time_since_start != -1) {
+			EnterCriticalSection(&timer_section);
+			/* just add diff (to make it work more than 50 days). */
+			tick_diff = tick_now - win32_last_get_time_tick;
+			win32_tick_time_since_start += tick_diff;
+
+			win32_last_get_time_tick = tick_now;
+			now = (win32_tick_time_since_start * 1000) + offset;
+			LeaveCriticalSection(&timer_section);
+		} else {
+			/* If someone is calling us before timer is initialized,
+			 * return the current tick + offset
+			 */
+			now = (tick_now * 1000) + offset;
+		}
+#endif
 	} else {
 #endif
 		now = switch_time_now();
 
-#if defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)
+#if (defined(HAVE_CLOCK_GETTIME) && defined(CLOCK_MONOTONIC)) || defined(WIN32)
 	}
 #endif
 
 	return now;
+}
+
+SWITCH_DECLARE(switch_time_t) switch_time_ref(void)
+{
+	return time_now(0);
 }
 
 SWITCH_DECLARE(void) switch_time_sync(void)
@@ -448,6 +485,7 @@ static switch_status_t timer_init(switch_timer_t *timer)
 		switch_mutex_unlock(globals.mutex);
 		timer->private_info = private_info;
 		private_info->start = private_info->reference = TIMER_MATRIX[timer->interval].tick;
+		private_info->start -= 2; /* switch_core_timer_init sets samplecount to samples, this makes first next() step once */
 		private_info->roll = TIMER_MATRIX[timer->interval].roll;
 		private_info->ready = 1;
 
@@ -513,10 +551,7 @@ static switch_status_t timer_sync(switch_timer_t *timer)
 	private_info->reference = timer->tick = TIMER_MATRIX[timer->interval].tick;
 
 	/* apply timestamp */
-	if (timer_step(timer) == SWITCH_STATUS_SUCCESS) {
-		/* push the reference into the future to prevent collision */
-		private_info->reference++;
-	}
+	timer_step(timer);
 
 	return SWITCH_STATUS_SUCCESS;
 }
@@ -999,6 +1034,9 @@ SWITCH_MODULE_LOAD_FUNCTION(softtimer_load)
 
 #if defined(WIN32)
 	timeBeginPeriod(1);
+	InitializeCriticalSection(&timer_section);
+	win32_last_get_time_tick = timeGetTime();
+	win32_tick_time_since_start = win32_last_get_time_tick;
 #endif
 
 	memset(&globals, 0, sizeof(globals));
@@ -1035,6 +1073,10 @@ SWITCH_MODULE_LOAD_FUNCTION(softtimer_load)
 		switch_log_printf(SWITCH_CHANNEL_LOG, SWITCH_LOG_CONSOLE, "Clock calibration disabled.\n");
 	}
 
+	if (switch_test_flag((&runtime), SCF_USE_WIN32_MONOTONIC)) {
+		MONO = 1;
+	}
+
 	/* indicate that the module should continue to be loaded */
 	return SWITCH_STATUS_SUCCESS;
 }
@@ -1054,6 +1096,8 @@ SWITCH_MODULE_SHUTDOWN_FUNCTION(softtimer_shutdown)
 	}
 #if defined(WIN32)
 	timeEndPeriod(1);
+	win32_tick_time_since_start = -1; /* we are not initialized anymore */
+	DeleteCriticalSection(&timer_section);
 #endif
 
 	if (TIMEZONES_LIST.hash) {

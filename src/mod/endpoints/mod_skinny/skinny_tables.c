@@ -99,18 +99,20 @@ SKINNY_DECLARE_ID2STR(skinny_message_type2str, SKINNY_MESSAGE_TYPES, "UnknownMes
 SKINNY_DECLARE_STR2ID(skinny_str2message_type, SKINNY_MESSAGE_TYPES, -1)
 
 struct skinny_table SKINNY_DEVICE_TYPES[] = {
-    {"Cisco 30 SP+", 0x0001},
-    {"Cisco 12 SP+", 0x0002},
-    {"Cisco 12 SP", 0x0003},
-    {"Cisco 12", 0x0004},
-    {"Cisco 30 VIP", 0x0005},
-    {"Cisco IP Phone 7910", 0x0006},
-    {"Cisco IP Phone 7960", 0x0007},
-    {"Cisco IP Phone 7940", 0x0008},
-    {"Cisco IP Phone 7935", 0x0009},
-    {"Cisco ATA 186", 0x000c},
-    {"Cisco IP Phone 7961", 0x4275},
-    {"Cisco IP Phone 7936", 0x4276},
+    {"Cisco 30 SP+", 1},
+    {"Cisco 12 SP+", 2},
+    {"Cisco 12 SP", 3},
+    {"Cisco 12", 4},
+    {"Cisco 30 VIP", 5},
+    {"Cisco IP Phone 7910", 6},
+    {"Cisco IP Phone 7960", 7},
+    {"Cisco IP Phone 7940", 8},
+    {"Cisco IP Phone 7935", 9},
+    {"Cisco ATA 186", 12},
+	{"Cisco IP Phone CP-7962G", 404},
+	{"Cisco IP Phone CP-7965G", 436},
+    {"Cisco IP Phone CP-7961G", 30018},
+    {"Cisco IP Phone 7936", 30019},
     {NULL, 0}
 };
 SKINNY_DECLARE_ID2STR(skinny_device_type2str, SKINNY_DEVICE_TYPES, "UnknownDeviceType")
@@ -139,6 +141,7 @@ struct skinny_table SKINNY_BUTTONS[] = {
     {"LastNumberRedial", SKINNY_BUTTON_LAST_NUMBER_REDIAL},
     {"SpeedDial", SKINNY_BUTTON_SPEED_DIAL},
     {"Hold", SKINNY_BUTTON_HOLD},
+    {"Transfer", SKINNY_BUTTON_TRANSFER},
     {"Line", SKINNY_BUTTON_LINE},
     {"Voicemail", SKINNY_BUTTON_VOICEMAIL},
     {"Privacy", SKINNY_BUTTON_PRIVACY},
@@ -148,6 +151,32 @@ struct skinny_table SKINNY_BUTTONS[] = {
 };
 SKINNY_DECLARE_ID2STR(skinny_button2str, SKINNY_BUTTONS, "Unknown")
 SKINNY_DECLARE_STR2ID(skinny_str2button, SKINNY_BUTTONS, -1)
+
+struct skinny_table SKINNY_SOFT_KEY_EVENTS[] = {
+    {"SoftkeyRedial", SOFTKEY_REDIAL},
+    {"SoftkeyNewcall", SOFTKEY_NEWCALL},
+    {"SoftkeyHold", SOFTKEY_HOLD},
+    {"SoftkeyTransfer", SOFTKEY_TRANSFER},
+    {"SoftkeyCfwdall", SOFTKEY_CFWDALL},
+    {"SoftkeyCfwdbusy", SOFTKEY_CFWDBUSY},
+    {"SoftkeyCfwdnoanswer", SOFTKEY_CFWDNOANSWER},
+    {"SoftkeyBackspace", SOFTKEY_BACKSPACE},
+    {"SoftkeyEndcall", SOFTKEY_ENDCALL},
+    {"SoftkeyResume", SOFTKEY_RESUME},
+    {"SoftkeyAnswer", SOFTKEY_ANSWER },
+    {"SoftkeyInfo", SOFTKEY_INFO},
+    {"SoftkeyConfrm", SOFTKEY_CONFRM},
+    {"SoftkeyPark", SOFTKEY_PARK},
+    {"SoftkeyJoin", SOFTKEY_JOIN},
+    {"SoftkeyMeetmeconfrm", SOFTKEY_MEETMECONFRM},
+    {"SoftkeyCallpickup", SOFTKEY_CALLPICKUP},
+    {"SoftkeyGrpcallpickup", SOFTKEY_GRPCALLPICKUP},
+    {"SoftkeyDnd", SOFTKEY_DND},
+    {"SoftkeyIdivert", SOFTKEY_IDIVERT},
+    {NULL, 0}
+};
+SKINNY_DECLARE_ID2STR(skinny_soft_key_event2str, SKINNY_SOFT_KEY_EVENTS, "SoftkeyUnknown")
+SKINNY_DECLARE_STR2ID(skinny_str2soft_key_event, SKINNY_SOFT_KEY_EVENTS, 0)
 
 struct skinny_table SKINNY_LAMP_MODES[] = {
     {"Off", SKINNY_LAMP_OFF},

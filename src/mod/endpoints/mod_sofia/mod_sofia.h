@@ -106,6 +106,7 @@ typedef struct private_object private_object_t;
 #define SOFIA_CRYPTO_MANDATORY_VARIABLE "sip_crypto_mandatory"
 #define FREESWITCH_SUPPORT "update_display"
 
+#include <switch_stun.h>
 #include <sofia-sip/nua.h>
 #include <sofia-sip/sip_status.h>
 #include <sofia-sip/sdp.h>
@@ -210,12 +211,14 @@ typedef enum {
 	PFLAG_SQL_IN_TRANS,
 	PFLAG_PASS_CALLEE_ID,
 	PFLAG_LOG_AUTH_FAIL,
+	PFLAG_FORWARD_MWI_NOTIFY,
 	PFLAG_TRACK_CALLS,
 	PFLAG_TRACK_CALLS_EVENTS,
 	PFLAG_DESTROY,
 	PFLAG_EXTENDED_INFO_PARSING,
 	PFLAG_T38_PASSTHRU,
 	PFLAG_CID_IN_1XX,
+	PFLAG_IN_DIALOG_CHAT,
 	/* No new flags below this line */
 	PFLAG_MAX
 } PFLAGS;
@@ -273,6 +276,7 @@ typedef enum {
 	TFLAG_RECOVERING,
 	TFLAG_RECOVERING_BRIDGE,
 	TFLAG_T38_PASSTHRU,
+	TFLAG_RECOVERED,
 	/* No new flags below this line */
 	TFLAG_MAX
 } TFLAGS;
@@ -698,6 +702,7 @@ struct private_object {
 struct callback_t {
 	char *val;
 	switch_size_t len;
+	switch_console_callback_match_t *list;
 	int matches;
 };
 
@@ -1003,3 +1008,5 @@ void sofia_glue_copy_t38_options(switch_t38_options_t *t38_options, switch_core_
 switch_t38_options_t *sofia_glue_extract_t38_options(switch_core_session_t *session, const char *r_sdp);
 char *sofia_glue_get_multipart(switch_core_session_t *session, const char *prefix, const char *sdp, char **mp_type);
 void sofia_glue_tech_simplify(private_object_t *tech_pvt);
+switch_console_callback_match_t *sofia_reg_find_reg_url_multi(sofia_profile_t *profile, const char *user, const char *host);
+switch_bool_t sofia_glue_profile_exists(const char *key);

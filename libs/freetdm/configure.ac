@@ -165,10 +165,24 @@ AC_ARG_WITH([libpri],
  [AS_HELP_STRING([--with-libpri], [Install ftmod_libpri])], [enable_libpri="yes"], [enable_libpri="no"])
 AC_SUBST(enable_libpri)
 
+# pritap?
+AC_ARG_WITH([pritap],
+ [AS_HELP_STRING([--with-pritap], [Install ftmod_pritap])], [enable_pritap="yes"], [enable_pritap="no"])
+AC_SUBST(enable_pritap)
+
+# debug dtmf?
+AC_ARG_WITH([debugdtmf],
+ [AS_HELP_STRING([--with-debugdtmf], [Debug DTMF])], [enable_debugdtmf="yes"], [enable_debugdtmf="no"])
+AC_SUBST(enable_debugdtmf)
+
 AC_CHECK_LIB([sangoma], [sangoma_span_chan_toif], [have_libsangoma="yes"])
 AM_CONDITIONAL([LIBSANGOMA],[test "${have_libsangoma}" = "yes"])
 
 AM_CONDITIONAL([LIBPRI],[test "${enable_libpri}" = "yes"])
+
+AM_CONDITIONAL([PRITAP],[test "${enable_pritap}" = "yes"])
+
+AM_CONDITIONAL([DEBUGDTMF],[test "${enable_debugdtmf}" = "yes"])
 
 AC_CHECK_LIB([sng_ss7], [sng_isup_init], [have_sng_ss7="yes"])
 AM_CONDITIONAL([SNGSS7],[test "${have_sng_ss7}" = "yes"])
@@ -178,6 +192,18 @@ AM_CONDITIONAL([SNGISDN],[test "${have_sng_isdn}" = "yes"])
 
 AC_CHECK_LIB([openr2], [openr2_context_set_io_type], [have_openr2="yes"])
 AM_CONDITIONAL([OPENR2],[test "${have_openr2}" = "yes"])
+
+if test "${have_sng_isdn}" = "yes"; then
+	if test "${build}" == "${host}"
+	then
+		case "${host}" in
+		x86_64-*)
+		# X86_64 machines need additional flags when compiling against libsng_isdn
+		CFLAGS="$CFLAGS -DBIT_64 -DALIGN_64BIT"
+		;;
+		esac
+	fi
+fi
 
 COMP_VENDOR_CFLAGS="$COMP_VENDOR_CFLAGS"
 AC_SUBST(COMP_VENDOR_CFLAGS)
