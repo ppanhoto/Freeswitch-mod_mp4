@@ -10,7 +10,7 @@ basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
 License for the specific language governing rights and limitations
 under the License.
 
-The Original Code is MP4 Abstraction Library to the Freeswitch MP4 Module.
+The Original Code is MP4 Helper Library to the Freeswitch MP4 Module.
 
 The Initial Developer of the Original Code is 
 Paulo Rogério Panhoto <paulo@voicetechnology.com.br>.
@@ -115,14 +115,17 @@ namespace MP4
 	{
 		if(rt.frame == 0 || rt.packet == rt.packetsPerFrame)
 		{
-			if(!MP4ReadRtpHint(fh, hint, ++rt.frame, &rt.packetsPerFrame))
+			++rt.frame;
+			if(!MP4ReadRtpHint(fh, hint, rt.frame, &rt.packetsPerFrame))
 				return false;
 			rt.packet = 0;
+			rt.last_frame = MP4GetSampleTime(fh, hint, rt.frame);
 		}
 
-		ts = MP4GetSampleTime(fh, hint, rt.packet);
-		if(!MP4ReadRtpPacket(fh, hint, rt.packet++, (u_int8_t **) &buffer, &size, 0, header, true))
+		ts = rt.last_frame;
+		if(!MP4ReadRtpPacket(fh, hint, rt.packet, (u_int8_t **) &buffer, &size, 0, header, true))
 			return false;
+		++rt.packet;
 		return true;
 	}
 

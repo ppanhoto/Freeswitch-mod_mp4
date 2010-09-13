@@ -10,10 +10,10 @@ basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See the
 License for the specific language governing rights and limitations
 under the License.
 
-The Original Code is Video File Abstraction Library to Freeswitch
+The Original Code is MP4 Helper Library to Freeswitch MP4 module.
 
 The Initial Developer of the Original Code is 
-Paulo Rogério Panhoto <paulo@voicetechnology.com.br>.(u_int8_t*)
+Paulo Rogério Panhoto <paulo@voicetechnology.com.br>.
 Portions created by Paulo Rogério Panhoto are 
 Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 
@@ -27,12 +27,12 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 
 namespace MP4
 {
-
 	struct RuntimeProperties
 	{
 		u_int32_t frame; // sampleID
 		u_int16_t packetsPerFrame;
 		u_int16_t packet; // packetID
+		u_int32_t last_frame; // timestamp
 
 		RuntimeProperties(): frame(0), packetsPerFrame(0), packet(0)
 		{

@@ -32,7 +32,7 @@
  */
 
 #include <switch.h>
-#include "mp4_helper.hpp"on with Cerys dueting﻿
+#include "mp4_helper.hpp"
 
 
 #ifndef min
@@ -255,9 +255,13 @@ struct PlayThreadParams
 	volatile bool done;
 };
 
-#include <cstdio>
+//#define DEBUG_STDOUT
 
-static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void *obj)
+#ifdef DEBUG_STDOUT
+#include <cstdio>
+#endif
+
+static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj)
 {
 	PlayThreadParams * pt = reinterpret_cast<PlayThreadParams*>(obj);
 	u_int next = 0, first = 0xffffffff;
@@ -281,7 +285,6 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 				if (ok)
 				{
 					switch_rtp_hdr_t *hdr = reinterpret_cast<switch_rtp_hdr_t *>(pt->frame->packet);
-					next = htonl(hdr->ts);
 					if(first == 0xffffffff) first = next;
 					next -= first;
 					control = next * 90000LL / pt->vc->videoTrack().track.clock;
@@ -299,19 +302,22 @@ static void *SWITCH_THREAD_FUNC play_video_thread(switch_thread_t *thread, void 
 			ts = switch_time_now() - start;
 			int64_t wait = control > ts ? (control - ts) : 0;
 			//switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
+#ifdef DEBUG_STDOUT
 			printf(
 				"wait = %lld, next = %ld, ctrl = %lf, ts = %lf\n", wait, next, control / 1e6, ts / 1e6);
+#endif
 
 			if(wait > 0 ) 
 			{
 				switch_cond_next();
 				/* wait the time for the next Video frame */
-				if(wait < 100000)
+				if(wait < 1000000)
 				{
 					switch_sleep(wait);
 				} else 
 				{
-					switch_sleep(1000000);
+					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
+						"wait = %lld, next = %ld, ctrl = %lf, ts = %lf\n", wait, next, control / 1e6, ts / 1e6);
 				}
 			}
 
@@ -375,7 +381,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		if(!vc.isSupported())
 		{
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
-				"Error reading track info. Maybe this file is not hinted.\n");
+				"Error reading track info. Maofficialybe this file is not hinted.\n");
 			throw 1;
 		}
 
@@ -450,7 +456,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		switch_threadattr_detach_set(thd_attr, 1);
 		switch_threadattr_stacksize_set(thd_attr, SWITCH_THREAD_STACKSIZE);
 		switch_thread_t *thread;
-		switch_thread_create(&thread, thd_attr, play_video_thread, (void*)&vpt, switch_core_session_get_pool(session));
+		switch_thread_create(&thread, thd_attr, play_function, (void*)&vpt, switch_core_session_get_pool(session));
 
 		PlayThreadParams apt;
 		apt.session = session;
@@ -460,7 +466,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		apt.video = false;
 		apt.vc = &vc;
 		apt.mutex = vpt.mutex;
-		play_video_thread(NULL, &apt);
+		play_function(NULL, &apt);
 
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Waiting for video thread to join.\n");
 		while(!vpt.done)
@@ -469,6 +475,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		}
 	} catch(...)
 	{
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Exception caught.\n");
 	}
 
 	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "All done.\n");
@@ -485,11 +492,6 @@ SWITCH_STANDARD_APP(play_mp4_function)
 
 		if (switch_core_codec_ready(&vid_codec))
 		switch_core_codec_destroy(&vid_codec);
-		/*
-		if (vc.isOpen())
-		VideoClose(vc);
-		*/
-
 }
 
 SWITCH_MODULE_LOAD_FUNCTION(mod_mp4_load)
