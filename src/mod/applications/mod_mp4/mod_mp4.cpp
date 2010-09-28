@@ -45,6 +45,7 @@ SWITCH_MODULE_DEFINITION(mod_mp4, mod_mp4_load, NULL, NULL);
 #define VID_BIT (1 << 31)
 #define VERSION 4201
 
+/*
 struct file_header {
 	int32_t version;
 	char video_codec_name[32];
@@ -59,6 +60,20 @@ struct record_helper {
 	switch_mutex_t *mutex;
 	int fd;
 	int up;
+};
+*/
+
+struct AVParams
+{
+	switch_core_session_t * session;
+	switch_channel_t * channel;
+	switch_timer_t * timer;
+	switch_frame_t * frame;
+	switch_mutex_t * mutex;
+	bool video;
+	switch_payload_t pt;
+	MP4::Context * vc;
+	volatile bool done;
 };
 
 static void *SWITCH_THREAD_FUNC record_video_thread(switch_thread_t *thread, void *obj)
@@ -143,10 +158,14 @@ SWITCH_STANDARD_APP(record_mp4_function)
 		return;
 	}
 
+/*
 	if ((fd = open((char *) data, O_WRONLY | O_CREAT | O_TRUNC | O_BINARY, S_IRUSR | S_IWUSR)) < 0) {
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Error opening file %s\n", (char *) data);
 		return;
 	}
+*/
+
+	MP4::Context ctx(reinterpret_cast<char*>(data), true);
 
 	if (switch_core_codec_init(&codec,
 			"L16",
@@ -242,19 +261,6 @@ SWITCH_STANDARD_APP(record_mp4_function)
 
 }
 
-struct PlayThreadParams
-{
-	switch_core_session_t * session;
-	switch_channel_t * channel;
-	switch_timer_t * timer;
-	switch_frame_t * frame;
-	switch_mutex_t * mutex;
-	bool video;
-	switch_payload_t pt;
-	MP4::Context * vc;
-	volatile bool done;
-};
-
 //#define DEBUG_STDOUT
 
 #ifdef DEBUG_STDOUT
@@ -263,7 +269,7 @@ struct PlayThreadParams
 
 static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj)
 {
-	PlayThreadParams * pt = reinterpret_cast<PlayThreadParams*>(obj);
+	AVParams * pt = reinterpret_cast<AVParams*>(obj);
 	u_int next = 0, first = 0xffffffff;
 	u_int64_t ts = 0, control = 0;
 
@@ -441,7 +447,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		}
 		switch_core_session_set_read_codec(session, &codec);
 
-		PlayThreadParams vpt;
+		AVParams vpt;
 		vpt.session = session;
 		vpt.channel = channel;
 		vpt.frame = &vid_frame;
@@ -458,7 +464,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		switch_thread_t *thread;
 		switch_thread_create(&thread, thd_attr, play_function, (void*)&vpt, switch_core_session_get_pool(session));
 
-		PlayThreadParams apt;
+		AVParams apt;
 		apt.session = session;
 		apt.channel = channel;
 		apt.frame = &write_frame;

@@ -78,10 +78,12 @@ namespace MP4
 	{
 	public:
 
-		Context(const char * file);
+		Context(const char * file, bool create = false);
 		~Context();
 
 		bool open(const char * file);
+		
+		bool create(const char * file);
 
 		void close();
 

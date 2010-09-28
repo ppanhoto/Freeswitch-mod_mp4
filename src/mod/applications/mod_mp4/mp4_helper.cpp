@@ -24,9 +24,10 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 namespace MP4
 {
 	
-	Context::Context(const char * file)
+	Context::Context(const char * file, bool create)
 	{
-		open(file);
+		if(create) create(file);
+		else open(file);
 	}
 	
 	Context::~Context()
@@ -38,6 +39,12 @@ namespace MP4
 	{
 		fh = MP4Read(file, 0);
 		return fh != MP4_INVALID_FILE_HANDLE && getTracks();
+	}
+	
+	bool Context::create(const char * file)
+	{
+		fh = MP4Create(file);
+		return fh != MP4_INVALID_FILE_HANDLE;
 	}
 
 	void Context::close()
