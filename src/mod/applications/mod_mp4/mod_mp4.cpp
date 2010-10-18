@@ -78,6 +78,7 @@ struct AVParams
 
 static void *SWITCH_THREAD_FUNC record_video_thread(switch_thread_t *thread, void *obj)
 {
+/*
 	record_helper *eh = reinterpret_cast<record_helper *>(obj);
 	switch_core_session_t *session = eh->session;
 	switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -116,11 +117,13 @@ static void *SWITCH_THREAD_FUNC record_video_thread(switch_thread_t *thread, voi
 		switch_core_session_write_video_frame(session, read_frame, SWITCH_IO_FLAG_NONE, 0);
 	}
 	eh->up = 0;
+*/
 	return NULL;
 }
 
 SWITCH_STANDARD_APP(record_mp4_function)
 {
+/*
 	switch_status_t status;
 	switch_frame_t *read_frame;
 	switch_channel_t *channel = switch_core_session_get_channel(session);
@@ -163,7 +166,7 @@ SWITCH_STANDARD_APP(record_mp4_function)
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Error opening file %s\n", (char *) data);
 		return;
 	}
-*/
+**
 
 	MP4::Context ctx(reinterpret_cast<char*>(data), true);
 
@@ -258,7 +261,7 @@ SWITCH_STANDARD_APP(record_mp4_function)
 
 	switch_core_session_set_read_codec(session, NULL);
 	switch_core_codec_destroy(&codec);
-
+*/
 }
 
 //#define DEBUG_STDOUT

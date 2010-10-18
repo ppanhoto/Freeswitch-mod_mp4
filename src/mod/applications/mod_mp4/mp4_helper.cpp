@@ -24,9 +24,9 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 namespace MP4
 {
 	
-	Context::Context(const char * file, bool create)
+	Context::Context(const char * file, bool newFile)
 	{
-		if(create) create(file);
+		if(newFile) create(file);
 		else open(file);
 	}
 	
