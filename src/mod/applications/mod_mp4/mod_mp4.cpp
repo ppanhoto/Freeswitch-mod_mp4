@@ -340,7 +340,8 @@ static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj
 				sent = true;
 			}
 		} else
-		{
+		{ // Audio block
+			// -- SEE switch_ivr_play_say.c:1231 && mod_dptools.c:1428 (DTMF ref).
 			switch_mutex_lock(pt->mutex);
 			pt->frame->datalen = pt->frame->buflen;
 			ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen, next);
@@ -370,27 +371,34 @@ SWITCH_STANDARD_APP(play_mp4_function)
 	unsigned char *vid_buffer;
 	switch_timer_t timer = { 0 };
 	switch_codec_implementation_t read_impl = {};
-	MP4::Context vc((char *) data);
-
-	switch_payload_t pt = 0;
-
-	switch_core_session_get_read_impl(session, &read_impl);
-
-	aud_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
-	vid_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
 
 	try
 	{
+		MP4::Context vc((char *) data);
+
+		switch_payload_t pt = 0;
+
+		switch_core_session_get_read_impl(session, &read_impl);
+
+		aud_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
+		vid_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
+
 		if (!vc.isOpen())
 		{
+			char msgbuf[1024];
+			sprintf(msgbuf, "PLAYBACK ERROR (%s): FILE NOT FOUND.", (char*) data);
+			switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE, msgbuf);
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, "Error opening file %s\n", (char *) data);
 			return;
 		}
 		
 		if(!vc.isSupported())
 		{
+			char msgbuf[1024];
+			sprintf(msgbuf, "PLAYBACK ERROR (%s): UNSUPPORTED FORMAT OR FILE NOT HINTED.", (char*) data);
+			switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE, msgbuf);
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
-				"Error reading track info. Maofficialybe this file is not hinted.\n");
+				"Error reading track info. Maybe this file is not hinted.\n");
 			throw 1;
 		}
 
@@ -432,7 +440,8 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		} else
 		{
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Audio Codec Activation Fail\n");
-			throw 3;
+			throw std::exception("Audio codec activation fail!");
+			//throw 3;
 		}
 
 		if (switch_core_codec_init(&vid_codec,
@@ -482,8 +491,17 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		{
 			switch_cond_next();
 		}
-	} catch(...)
+
+		switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE, "FILE PLAYED");
+	} catch(const std::exception & e) 
 	{
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
+				"%s\n", e.what());
+		switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE,
+			(std::string("PLAYBACK_FAILED - ") + e.what()).c_str());
+	}catch(...)
+	{
+		switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE, "PLAYBACK_FAILED - See FS logs for detail.");
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Exception caught.\n");
 	}
 

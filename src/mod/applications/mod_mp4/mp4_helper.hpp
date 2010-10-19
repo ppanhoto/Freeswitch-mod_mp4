@@ -24,9 +24,22 @@ Copyright (C) 2010, Voice Technology Ind. e Com. Ltda. All Rights Reserved.
 
 #include <mp4.h>
 #include <string>
+#include <exception>
+#include <string>
 
 namespace MP4
 {
+	class Exception: public std::exception
+	{
+		public:
+			Exception(const std::string & file, const std::string & error)
+			: description_(file + ':' + error) {}
+			const char * what() const throw() { return description_.c_str(); }
+			~Exception() throw() {}
+		private:
+			std::string description_;
+	};
+	
 	struct RuntimeProperties
 	{
 		u_int32_t frame; // sampleID
@@ -81,9 +94,9 @@ namespace MP4
 		Context(const char * file, bool create = false);
 		~Context();
 
-		bool open(const char * file);
+		void open(const char * file);
 		
-		bool create(const char * file);
+		void create(const char * file);
 
 		void close();
 
@@ -113,7 +126,7 @@ namespace MP4
 		bool getPacket(MP4TrackId hint, RuntimeProperties & rt,
 				bool header, void * buffer, u_int & size, u_int & ts);
 
-		bool getTracks();
+		void getTracks(const char * file);
 	};
 }
 #endif

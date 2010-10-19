@@ -35,16 +35,19 @@ namespace MP4
 		close();
 	}
 
-	bool Context::open(const char * file)
+	void Context::open(const char * file)
 	{
 		fh = MP4Read(file, 0);
-		return fh != MP4_INVALID_FILE_HANDLE && getTracks();
+		if(fh == MP4_INVALID_FILE_HANDLE)
+			throw Exception(file, "Open failed");
+		getTracks(file);
 	}
 	
-	bool Context::create(const char * file)
+	void Context::create(const char * file)
 	{
 		fh = MP4Create(file);
-		return fh != MP4_INVALID_FILE_HANDLE;
+		if(fh == MP4_INVALID_FILE_HANDLE)
+			throw Exception(file, "Create file failed");
 	}
 
 	void Context::close()
@@ -54,14 +57,14 @@ namespace MP4
 		MP4Close(fh);
 	}
 
-	bool Context::getTracks()
+	void Context::getTracks(const char * file)
 	{
 		int i = 0;
 		bool audioTrack = false, videoTrack = false;
 
-		if(!isOpen()) return false;
+		if(!isOpen()) throw Exception(file, "File is closed.");
 
-		while(true)
+		for(;;)
 		{
 			TrackProperties track;
 			if((track.hint = MP4FindTrackId(fh, i++, MP4_HINT_TRACK_TYPE, 0)) == MP4_INVALID_TRACK_ID)
@@ -104,7 +107,7 @@ namespace MP4
 			}
 		}
 
-		return audioTrack && videoTrack;
+		if(!audioTrack || !videoTrack) throw Exception(file, "Missing audio/video track.");
 	}
 
 	bool Context::getVideoPacket(void * buffer, u_int & size, u_int & ts)
