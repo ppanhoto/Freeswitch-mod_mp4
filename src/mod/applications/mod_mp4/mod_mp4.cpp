@@ -33,6 +33,7 @@
 
 #include <switch.h>
 #include "mp4_helper.hpp"
+#include "exception.hpp"
 
 
 #ifndef min
@@ -73,7 +74,8 @@ struct AVParams
 	bool video;
 	switch_payload_t pt;
 	MP4::Context * vc;
-	volatile bool done;
+	bool done;
+	bool * quit;
 };
 
 static void *SWITCH_THREAD_FUNC record_video_thread(switch_thread_t *thread, void *obj)
@@ -270,7 +272,7 @@ SWITCH_STANDARD_APP(record_mp4_function)
 #include <cstdio>
 #endif
 
-static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj)
+static void *SWITCH_THREAD_FUNC play_video_function(switch_thread_t *thread, void *obj)
 {
 	AVParams * pt = reinterpret_cast<AVParams*>(obj);
 	u_int next = 0, first = 0xffffffff;
@@ -280,7 +282,8 @@ static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj
 	bool sent = true;
 	pt->done = false;
 	switch_time_t start = switch_time_now();
-	while (switch_channel_ready(pt->channel))
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG, "Video thread Started\n");
+	while (!*pt->quit && switch_channel_ready(pt->channel))
 	{
 		if(pt->video)
 		{
@@ -323,10 +326,6 @@ static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj
 				if(wait < 1000000)
 				{
 					switch_sleep(wait);
-				} else 
-				{
-					switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG,
-						"wait = %lld, next = %ld, ctrl = %lf, ts = %lf\n", wait, next, control / 1e6, ts / 1e6);
 				}
 			}
 
@@ -339,26 +338,68 @@ static void *SWITCH_THREAD_FUNC play_function(switch_thread_t *thread, void *obj
 				switch_core_session_write_video_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
 				sent = true;
 			}
-		} else
-		{ // Audio block
-			// -- SEE switch_ivr_play_say.c:1231 && mod_dptools.c:1428 (DTMF ref).
-			switch_mutex_lock(pt->mutex);
-			pt->frame->datalen = pt->frame->buflen;
-			ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen, next);
-			switch_mutex_unlock(pt->mutex);
 
-			if(ok)
-			{
-				if (pt->frame->datalen > (int) pt->frame->buflen)
-					pt->frame->datalen = pt->frame->buflen;
-
-				switch_core_session_write_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
-				switch_core_timer_next(pt->timer);
-			}
-			else break;
-		}
+		} 
 	}
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG, "Video thread ended\n");
 	pt->done = true;
+	return NULL;
+}
+
+static void *SWITCH_THREAD_FUNC play_audio_function(switch_thread_t *thread, void *obj)
+{
+	AVParams * pt = reinterpret_cast<AVParams*>(obj);
+	u_int next = 0, first = 0xffffffff;
+	u_int64_t ts = 0, control = 0;
+
+	bool ok;
+	bool sent = true;
+	switch_dtmf_t dtmf = {0};
+	pt->done = false;
+	while (!*pt->quit && switch_channel_ready(pt->channel))
+	{
+		// event processing.
+		// -- SEE switch_ivr_play_say.c:1231 && mod_dptools.c:1428 && mod_dptools.c:1919
+
+if(switch_channel_test_flag(pt->channel, CF_BREAK))
+		{
+			switch_channel_clear_flag(pt->channel, CF_BREAK);
+			break;
+		}
+
+		switch_ivr_parse_all_events(pt->session);
+		
+		if(switch_channel_has_dtmf(pt->channel))
+		{
+			switch_channel_dequeue_dtmf(pt->channel, &dtmf);
+			const char * terminators = switch_channel_get_variable(pt->channel, SWITCH_PLAYBACK_TERMINATORS_VARIABLE);
+			if(terminators && !strcasecmp(terminators, "none")) terminators = NULL;
+			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG, "Digit %c\n", dtmf.digit);
+			if(terminators && strchr(terminators, dtmf.digit))
+			{
+				std::string digit(&dtmf.digit, 0, 1);
+				switch_channel_set_variable(pt->channel, SWITCH_PLAYBACK_TERMINATOR_USED, digit.c_str());
+				break;
+			}
+		}
+		
+		switch_mutex_lock(pt->mutex);
+		pt->frame->datalen = pt->frame->buflen;
+		ok = pt->vc->getAudioPacket(pt->frame->data, pt->frame->datalen, next);
+		switch_mutex_unlock(pt->mutex);
+
+		if(ok)
+		{
+		  if (pt->frame->datalen > (int) pt->frame->buflen)
+				pt->frame->datalen = pt->frame->buflen;
+
+			switch_core_session_write_frame(pt->session, pt->frame, SWITCH_IO_FLAG_NONE, 0);
+			switch_core_timer_next(pt->timer);
+		}
+		else break;
+	}
+	switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(pt->session), SWITCH_LOG_DEBUG, "Audio done\n");
+	*pt->quit = pt->done = true;
 	return NULL;
 }
 
@@ -371,6 +412,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 	unsigned char *vid_buffer;
 	switch_timer_t timer = { 0 };
 	switch_codec_implementation_t read_impl = {};
+	bool done = false;
 
 	try
 	{
@@ -383,6 +425,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		aud_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
 		vid_buffer = (unsigned char *) switch_core_session_alloc(session, SWITCH_RECOMMENDED_BUFFER_SIZE);
 
+		/*
 		if (!vc.isOpen())
 		{
 			char msgbuf[1024];
@@ -401,6 +444,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 				"Error reading track info. Maybe this file is not hinted.\n");
 			throw 1;
 		}
+		*/
 
 		switch_channel_set_variable(channel, "sip_force_video_fmtp", vc.videoTrack().fmtp.c_str());
 		switch_channel_answer(channel);
@@ -439,9 +483,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Audio Codec Activation Success\n");
 		} else
 		{
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Audio Codec Activation Fail\n");
-			throw std::exception("Audio codec activation fail!");
-			//throw 3;
+			throw Exception("Audio Codec Activation Fail");
 		}
 
 		if (switch_core_codec_init(&vid_codec,
@@ -454,8 +496,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Video Codec Activation Success\n");
 		} else
 		{
-			switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "Video Codec Activation Fail\n");
-			throw 4;
+			throw Exception("Video Codec Activation Fail");
 		}
 		switch_core_session_set_read_codec(session, &codec);
 
@@ -468,13 +509,14 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		vpt.pt = pt;
 		vpt.vc = &vc;
 		switch_mutex_init(&vpt.mutex, SWITCH_MUTEX_DEFAULT, switch_core_session_get_pool(session));
-
+		vpt.quit = &done;
+		
 		switch_threadattr_t * thd_attr;
 		switch_threadattr_create(&thd_attr, switch_core_session_get_pool(session));
 		switch_threadattr_detach_set(thd_attr, 1);
 		switch_threadattr_stacksize_set(thd_attr, SWITCH_THREAD_STACKSIZE);
 		switch_thread_t *thread;
-		switch_thread_create(&thread, thd_attr, play_function, (void*)&vpt, switch_core_session_get_pool(session));
+		switch_thread_create(&thread, thd_attr, play_video_function, (void*)&vpt, switch_core_session_get_pool(session));
 
 		AVParams apt;
 		apt.session = session;
@@ -484,7 +526,8 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		apt.video = false;
 		apt.vc = &vc;
 		apt.mutex = vpt.mutex;
-		play_function(NULL, &apt);
+		apt.quit = &done;
+		play_audio_function(NULL, &apt);
 
 		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_DEBUG, "Waiting for video thread to join.\n");
 		while(!vpt.done)
@@ -495,8 +538,7 @@ SWITCH_STANDARD_APP(play_mp4_function)
 		switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE, "FILE PLAYED");
 	} catch(const std::exception & e) 
 	{
-		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_CRIT, 
-				"%s\n", e.what());
+		switch_log_printf(SWITCH_CHANNEL_SESSION_LOG(session), SWITCH_LOG_ERROR, "%s\n", e.what());
 		switch_channel_set_variable(channel, SWITCH_CURRENT_APPLICATION_RESPONSE_VARIABLE,
 			(std::string("PLAYBACK_FAILED - ") + e.what()).c_str());
 	}catch(...)
@@ -529,7 +571,7 @@ SWITCH_MODULE_LOAD_FUNCTION(mod_mp4_load)
 	*module_interface = switch_loadable_module_create_module_interface(pool, modname);
 
 	SWITCH_ADD_APP(app_interface, "play_mp4", "play an MP4 file", "play an MP4 file", play_mp4_function, "<file>", SAF_NONE);
-	SWITCH_ADD_APP(app_interface, "record_mp4", "record an MP4 file", "record an MP4 file", record_mp4_function, "<file>", SAF_NONE);
+	//SWITCH_ADD_APP(app_interface, "record_mp4", "record an MP4 file", "record an MP4 file", record_mp4_function, "<file>", SAF_NONE);
 
 	/* indicate that the module should continue to be loaded */
 	return SWITCH_STATUS_SUCCESS;
