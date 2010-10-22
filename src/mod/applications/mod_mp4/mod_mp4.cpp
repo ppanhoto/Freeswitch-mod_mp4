@@ -361,7 +361,7 @@ static void *SWITCH_THREAD_FUNC play_audio_function(switch_thread_t *thread, voi
 		// event processing.
 		// -- SEE switch_ivr_play_say.c:1231 && mod_dptools.c:1428 && mod_dptools.c:1919
 
-if(switch_channel_test_flag(pt->channel, CF_BREAK))
+		if(switch_channel_test_flag(pt->channel, CF_BREAK))
 		{
 			switch_channel_clear_flag(pt->channel, CF_BREAK);
 			break;
